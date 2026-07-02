@@ -9,13 +9,12 @@ import typer
 from magenta.config import load_models
 from magenta.llm import chat
 
-app = typer.Typer(help="Magenta Retain — churn retention agent CLI.")
+app = typer.Typer(help="Magenta Retain — churn retention agent CLI.", no_args_is_help=True)
 
 
-@app.callback(invoke_without_command=True)
+@app.callback()
 def callback() -> None:
-    """Main app callback."""
-    pass
+    """Magenta Retain — churn retention agent CLI."""
 
 
 @app.command()

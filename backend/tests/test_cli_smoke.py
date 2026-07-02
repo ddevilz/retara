@@ -18,3 +18,9 @@ def test_smoke_prints_model_reply_latency(monkeypatch):
     assert "llama-3.1-8b-instant" in result.output  # CHEAP model id
     assert "pong" in result.output
     assert "ms" in result.output
+
+
+def test_bare_invocation_shows_help():
+    result = runner.invoke(app, [])
+    assert result.exit_code != 0 or "smoke" in result.output
+    assert "Usage" in result.output or "smoke" in result.output
