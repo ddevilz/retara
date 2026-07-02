@@ -1,0 +1,28 @@
+{
+  "source": "Fitted marginals shaped after IBM Telco Customer Churn (7043 rows). No PII copied.",
+  "contract": {
+    "MONTH_TO_MONTH": 0.55,
+    "ONE_YEAR": 0.21,
+    "TWO_YEAR": 0.24
+  },
+  "plan": {
+    "BASIC": 0.34,
+    "STANDARD": 0.44,
+    "PREMIUM": 0.22
+  },
+  "tenure_months": { "mean": 32.4, "sd": 24.6, "min": 1, "max": 72 },
+  "monthly_charge": {
+    "BASIC": { "mean": 35.0, "sd": 8.0 },
+    "STANDARD": { "mean": 70.0, "sd": 12.0 },
+    "PREMIUM": { "mean": 105.0, "sd": 15.0 }
+  },
+  "data_allowance_gb": { "BASIC": 5.0, "STANDARD": 20.0, "PREMIUM": 60.0 },
+  "nps_missing_rate": 0.40,
+  "base_churn_rate": 0.265,
+  "segment_mix": {
+    "PERSUADABLE": 0.25,
+    "SURE_THING": 0.50,
+    "LOST_CAUSE": 0.17,
+    "SLEEPING_DOG": 0.08
+  }
+}
