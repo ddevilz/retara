@@ -112,7 +112,10 @@ def test_persuadable_segment_weakly_recoverable_from_observables():
     Locks in both directions: AUC > 0.56 (real signal exists) and < 0.85
     (not trivially recoverable).
     """
-    pop, hidden = generate_population(8000, seed=20260702)
+    # n=20000: at n=8000 the band floor had only ~1-std margin (review measured
+    # 1/20 seeds below 0.56); at 20k, 0/15 seeds dipped below. Keeps the test
+    # robust if the seed or featurization ever changes.
+    pop, hidden = generate_population(20000, seed=20260702)
     x = _featurize(pop)
     y = np.array(
         [hidden[c.customer_id].persuadable_segment == Segment.PERSUADABLE for c in pop],
