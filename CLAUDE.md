@@ -20,6 +20,7 @@ Plan fragments: `docs/superpowers/plans/fragments/`.
 - **Plain `openai` package** — NO LangChain / LiteLLM gateway. `base_url` keeps it swappable.
 - **LangSmith** via `langsmith.wrappers.wrap_openai` + env `LANGSMITH_TRACING` (no LangChain).
 - **No network in tests** — mock the OpenAI client.
+- **All imports at module top** — NO function-level / lazy imports, ever (owner rule).
 
 ## Anti-circularity (the #1 critique defense)
 Hidden state (`theta_churn_base`, `theta_price_sens`, `persuadable_segment`, `competitor_pull`)
