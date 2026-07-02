@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# uv
+.uv/
+
+# Data / DB artifacts (keep committed configs + telco_marginals.json)
+data/*.db
+data/*.db-*
+*.sqlite
+*.sqlite3
+
+# Env / secrets
+.env
+.env.*
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Project docs / agent scratch (kept local, not committed)
+docs/
+.claude/
+.agents/
+.superpowers/
+skills-lock.json
