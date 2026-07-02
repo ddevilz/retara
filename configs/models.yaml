@@ -1,0 +1,5 @@
+# Role -> model id. Default provider = Groq free tier (llm.py sets base_url + GROQ_API_KEY).
+# Any OpenAI-compatible provider swaps in via OPENAI_API_KEY + OPENAI_BASE_URL env.
+CHEAP: llama-3.1-8b-instant        # 14.4k req/day free — high-volume workhorse (perceive, diagnose, drafting)
+LARGE: llama-3.3-70b-versatile     # 30 RPM / 1k req/day — reasoning, negotiation, System-2
+JUDGE: openai/gpt-oss-120b         # non-Llama family -> avoids judge self-preference bias
