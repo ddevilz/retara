@@ -73,8 +73,74 @@ def _choice(rng: np.random.Generator, dist: dict[str, float]) -> str:
     return keys[int(rng.choice(len(keys), p=probs))]
 
 
-def _sample_segment(rng: np.random.Generator, mix: dict[str, float]) -> Segment:
-    return Segment(_choice(rng, mix))
+# --- persuadable_segment: probabilistic assignment FROM HIDDEN STATE --------
+#
+# Spec requirement: segment must NOT be an independent draw from the static
+# mix (that caps any uplift-targeting model at random by construction, since
+# persuadability would carry zero signal in observables X). Instead it is
+# sampled from a softmax over per-segment logits built from the
+# already-sampled hidden thetas, so it inherits the same weak,
+# noisy observable-correlation that the thetas themselves have — real
+# randomness (a categorical draw over calibrated probabilities), never a
+# deterministic threshold.
+#
+# Directional logic baked into the weights below:
+#   PERSUADABLE:   higher theta_churn_base AND higher theta_price_sens
+#                  (their churn risk is price-fixable).
+#   LOST_CAUSE:    higher theta_churn_base + high competitor_pull + LOW
+#                  theta_price_sens (leaving regardless; offers can't help).
+#   SURE_THING:    low theta_churn_base (nothing to fix — they weren't
+#                  leaving anyway).
+#   SLEEPING_DOG:  low-to-mid churn risk (|theta_churn_base| small) AND low
+#                  theta_price_sens as a contact-aversion proxy (not
+#                  deal-driven — a retention outreach reads as unwanted
+#                  attention rather than a fix).
+#
+# _SEG_INTERCEPT values were calibrated offline (fixed-point iteration:
+# a_i += log(target_i) - log(achieved_i), integrating over the theta priors
+# used in generate_population, 400k-sample Monte Carlo) so the *expected*
+# mix reproduces the spec target of 25/50/17/8 exactly. If the target mix in
+# telco_marginals.json ever changes, or the weights below change, these
+# intercepts need to be recalibrated the same way.
+_SEG_WEIGHTS = {
+    "PERSUADABLE": {"churn": 0.55, "price": 0.55},
+    "SURE_THING": {"churn": -0.85},
+    "LOST_CAUSE": {"churn": 0.45, "competitor": 1.1, "price": -0.55},
+    "SLEEPING_DOG": {"abs_churn": -0.55, "price": -0.45},
+}
+_SEG_INTERCEPT = {
+    "PERSUADABLE": -0.1491,
+    "SURE_THING": 0.7407,
+    "LOST_CAUSE": -0.8227,
+    "SLEEPING_DOG": -0.6973,
+}
+_SEG_ORDER = [Segment.PERSUADABLE, Segment.SURE_THING, Segment.LOST_CAUSE, Segment.SLEEPING_DOG]
+
+
+def _sample_segment(
+    rng: np.random.Generator,
+    theta_churn_base: float,
+    theta_price_sens: float,
+    competitor_pull: float,
+) -> Segment:
+    w = _SEG_WEIGHTS
+    logits = np.array([
+        _SEG_INTERCEPT["PERSUADABLE"]
+        + w["PERSUADABLE"]["churn"] * theta_churn_base
+        + w["PERSUADABLE"]["price"] * theta_price_sens,
+        _SEG_INTERCEPT["SURE_THING"]
+        + w["SURE_THING"]["churn"] * theta_churn_base,
+        _SEG_INTERCEPT["LOST_CAUSE"]
+        + w["LOST_CAUSE"]["churn"] * theta_churn_base
+        + w["LOST_CAUSE"]["competitor"] * competitor_pull
+        + w["LOST_CAUSE"]["price"] * theta_price_sens,
+        _SEG_INTERCEPT["SLEEPING_DOG"]
+        + w["SLEEPING_DOG"]["abs_churn"] * abs(theta_churn_base)
+        + w["SLEEPING_DOG"]["price"] * theta_price_sens,
+    ])
+    probs = np.exp(logits - logits.max())
+    probs = probs / probs.sum()
+    return _SEG_ORDER[int(rng.choice(len(_SEG_ORDER), p=probs))]
 
 
 def generate_population(n: int, seed: int) -> tuple[list[Customer], HiddenStore]:
@@ -87,7 +153,6 @@ def generate_population(n: int, seed: int) -> tuple[list[Customer], HiddenStore]
 
     contract_dist = m["contract"]
     plan_dist = m["plan"]
-    seg_mix = m["segment_mix"]
     ten = m["tenure_months"]
     charge = m["monthly_charge"]
     allowance = m["data_allowance_gb"]
@@ -96,11 +161,13 @@ def generate_population(n: int, seed: int) -> tuple[list[Customer], HiddenStore]
     for i in range(n):
         cid = f"C{i:07d}"
 
-        segment = _sample_segment(rng, seg_mix)
         # hidden latent draws — correlated with, but not revealing, observables
         theta_churn_base = float(np.clip(rng.normal(0.0, 1.0), -3.0, 3.0))
         theta_price_sens = float(np.clip(rng.normal(0.0, 1.0), -3.0, 3.0))
         competitor_pull = float(np.clip(rng.beta(2.0, 5.0), 0.0, 1.0))
+        # segment is assigned PROBABILISTICALLY FROM HIDDEN STATE (spec), not
+        # as an independent draw — see _sample_segment for the mechanism.
+        segment = _sample_segment(rng, theta_churn_base, theta_price_sens, competitor_pull)
         hidden[cid] = HiddenState(
             theta_churn_base=theta_churn_base,
             theta_price_sens=theta_price_sens,
