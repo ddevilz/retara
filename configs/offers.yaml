@@ -1,0 +1,43 @@
+# 8-arm retention offer catalog. cost = euros/month concession; min_margin = floor after offer.
+# fits_causes = event causes this arm addresses (must mirror oracle _ARM_FITS).
+arms:
+  NO_ACTION:
+    cost: 0.0
+    min_margin: 0.0
+    eligibility_note: "Always available; the restraint arm."
+    fits_causes: []
+  ACKNOWLEDGE_AND_FIX:
+    cost: 2.0
+    min_margin: 10.0
+    eligibility_note: "Service issues; a goodwill acknowledgement + fix."
+    fits_causes: ["SERVICE_COMPLAINT", "DROPPED_CALLS"]
+  BILL_CREDIT:
+    cost: 8.0
+    min_margin: 12.0
+    eligibility_note: "Bill-shock/overage; one-off or recurring credit."
+    fits_causes: ["BILL_SHOCK", "OVERAGE"]
+  PLAN_DOWNSELL:
+    cost: 6.0
+    min_margin: 12.0
+    eligibility_note: "Over-paying for unused allowance; move to cheaper plan."
+    fits_causes: ["BILL_SHOCK", "OVERAGE"]
+  DATA_BOOST:
+    cost: 5.0
+    min_margin: 10.0
+    eligibility_note: "Heavy data users hitting caps; add allowance."
+    fits_causes: ["OVERAGE"]
+  DEVICE_UPGRADE:
+    cost: 20.0
+    min_margin: 15.0
+    eligibility_note: "Old device + contract ending; upgrade voucher."
+    fits_causes: ["CONTRACT_EXPIRY"]
+  NETWORK_PRIORITY_FIX:
+    cost: 4.0
+    min_margin: 10.0
+    eligibility_note: "Network pain; QoS priority remediation."
+    fits_causes: ["DROPPED_CALLS"]
+  BUNDLE_ADDON:
+    cost: 7.0
+    min_margin: 12.0
+    eligibility_note: "Competitor pull / contract end; sticky bundle add-on."
+    fits_causes: ["COMPETITOR_OFFER", "CONTRACT_EXPIRY"]
