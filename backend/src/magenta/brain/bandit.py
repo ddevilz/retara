@@ -22,6 +22,7 @@ class ThompsonBandit:
         arms: list[Arm],
         lam: float = 1.0,
         sigma2: float = 0.25,
+        seed: int = 0,
     ) -> None:
         self.dim = dim
         self.arms = list(arms)
@@ -30,7 +31,7 @@ class ThompsonBandit:
         self._A: dict[Arm, np.ndarray] = {a: lam * np.eye(dim) for a in arms}
         self._b: dict[Arm, np.ndarray] = {a: np.zeros(dim) for a in arms}
         self._n: dict[Arm, int] = {a: 0 for a in arms}
-        self._rng = np.random.default_rng(0)
+        self._rng = np.random.default_rng(seed)
 
     def _theta_mean(self, arm: Arm) -> np.ndarray:
         return np.linalg.solve(self._A[arm], self._b[arm])
