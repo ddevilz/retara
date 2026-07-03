@@ -14,6 +14,7 @@ venv/
 # Data / DB artifacts (keep committed configs + telco_marginals.json)
 data/*.db
 data/*.db-*
+data/models/
 *.sqlite
 *.sqlite3
 

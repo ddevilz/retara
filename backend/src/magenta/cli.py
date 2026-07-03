@@ -6,6 +6,8 @@ import time
 
 import typer
 
+from magenta.brain.risk import RiskModel
+from magenta.brain.training import build_training_data
 from magenta.config import configs_dir, load_models
 from magenta.experiment import (
     NoActionPolicy,
@@ -28,6 +30,62 @@ def callback() -> None:
 
 sim_app = typer.Typer(help="Simulator commands.", no_args_is_help=True)
 app.add_typer(sim_app, name="sim")
+
+
+risk_app = typer.Typer(help="Churn-risk model: train / eval / score.")
+app.add_typer(risk_app, name="risk")
+
+
+@risk_app.command("train")
+def risk_train(
+    n: int = typer.Option(8000, help="training population size"),
+    seed: int = typer.Option(7, help="seed"),
+    out: str = typer.Option("data/models/risk.joblib", help="output path"),
+) -> None:
+    """Train a churn-risk model on synthetic data."""
+    td = build_training_data(n=n, seed=seed)
+    model = RiskModel().fit(td.customers, td.churned)
+    model.save(out)
+    typer.echo(f"saved risk model -> {out} (n={n}, seed={seed})")
+
+
+@risk_app.command("eval")
+def risk_eval(
+    n: int = typer.Option(4000, help="eval population size"),
+    seed: int = typer.Option(99, help="seed"),
+    model: str = typer.Option("data/models/risk.joblib", help="model path"),
+) -> None:
+    """Evaluate a risk model on a held-out population."""
+    m = RiskModel.load(model)
+    td = build_training_data(n=n, seed=seed)
+    rep = m.evaluate(td.customers, td.churned)
+    typer.echo("metric   value")
+    typer.echo(f"AUC      {rep.auc:.4f}")
+    typer.echo(f"Brier    {rep.brier:.4f}")
+    typer.echo(f"ECE      {rep.ece:.4f}")
+
+
+@risk_app.command("score")
+def risk_score(
+    customer_id: str = typer.Argument(..., help="customer id, e.g. SIM-0"),
+    n: int = typer.Option(500, help="population to draw the customer from"),
+    seed: int = typer.Option(7, help="seed"),
+    model: str = typer.Option("data/models/risk.joblib", help="model path"),
+) -> None:
+    """Score a customer for churn risk."""
+    m = RiskModel.load(model)
+    customers, _ = generate_population(n, seed=seed)
+    match = next((c for c in customers if c.customer_id == customer_id), None)
+    if match is None:
+        match = customers[0]
+        typer.echo(f"(id {customer_id} not found; scoring {match.customer_id})")
+    a = m.score(match)
+    typer.echo(f"customer {match.customer_id}")
+    typer.echo(f"p_churn  {a.p_churn:.4f}   band {a.band.value}")
+    typer.echo("top drivers:")
+    for d in a.drivers:
+        arrow = "^" if d.direction == "UP" else "v"
+        typer.echo(f"  {arrow} {d.label:<28} shap={d.shap_value:+.4f}")
 
 
 @sim_app.command("generate")
