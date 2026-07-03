@@ -1,7 +1,11 @@
 # FROZEN sim params — committed before any agent code. Do NOT tune to flatter the agent.
 # Churn hazard logit: A0 + A1*theta_churn_base + A2*sum(event mult) + A3*competitor_pull + BETA_OFFER*offer_effect
 churn:
-  A0: -1.10          # base intercept -> ~0.25 base churn with average latent state
+  A0: -1.81          # base intercept: calibrated 2026-07-03 (PRE-agent, within freeze window)
+                     # so realized population base churn ≈ 0.265, matching the IBM-Telco
+                     # marginal (data/telco_marginals.json base_churn_rate). The original
+                     # -1.10 comment ignored the non-zero-mean event + competitor load.
+                     # FROZEN hereafter — Lab 3+ (agent/ML) must never touch this file.
   A1: 0.85           # weight on hidden churn propensity
   A2: 0.70           # weight on summed event hazard multipliers
   A3: 0.90           # weight on competitor pull
