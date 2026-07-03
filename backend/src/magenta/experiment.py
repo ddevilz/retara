@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from magenta.config import configs_dir
 from magenta.offers import Arm, OfferCatalog, OfferDecision
 from magenta.sim.oracle import ResponseOracle, SimParams
-from magenta.sim.population import Customer, HiddenStore, Segment, generate_population
+from magenta.sim.population import Customer, Segment, generate_population
 
 
 @runtime_checkable
@@ -84,7 +84,8 @@ def _run_arms(policy: Policy, n: int, seed: int, budget: float | None) -> list[d
         holdout = assign_holdout(c.customer_id, seed)
         rec = {"customer_id": c.customer_id, "holdout": holdout,
                "offer_arm": None, "accepted": False, "churned": None,
-               "spend": 0.0, "segment": hidden[c.customer_id].persuadable_segment}
+               "spend": 0.0, "segment": hidden[c.customer_id].persuadable_segment,
+               "margin_monthly": c.gross_margin_monthly}
         if holdout:
             records.append(rec)
             continue
@@ -99,12 +100,10 @@ def _run_arms(policy: Policy, n: int, seed: int, budget: float | None) -> list[d
     if budget is not None:
         treated_candidates.sort(key=lambda t: t[0].clv_estimate, reverse=True)
     spend = 0.0
-    chosen_ids: set[str] = set()
     for c, decision in treated_candidates:
         if budget is not None and spend + decision.cost > budget + 1e-9:
             continue
         spend += decision.cost
-        chosen_ids.add(c.customer_id)
         rec_by_id[c.customer_id]["offer_arm"] = decision.arm
         rec_by_id[c.customer_id]["spend"] = decision.cost
 
@@ -177,9 +176,15 @@ def run_experiment(
         1 for r in offered if r["segment"] == Segment.SLEEPING_DOG)
     offer_spend = float(sum(r["spend"] for r in treat))
 
-    # euros retained = (churn averted count) * mean monthly margin proxy (single period).
-    averted = max(0.0, ate) * len(treat)
-    euros_retained = float(averted * 30.0)  # illustrative single-period margin per save
+    # euros retained (NET, per spec §7: "ATE × population × margin − offer cost").
+    # margin = mean annualized gross margin of the treatment arm (12 × monthly);
+    # ate may be negative -> negative saves count, honestly reported. Spend is
+    # always subtracted, so a spray-and-pray policy shows its true net loss.
+    mean_annual_margin = (
+        float(np.mean([r["margin_monthly"] for r in treat])) * 12.0 if treat else 0.0
+    )
+    averted = ate * len(treat)
+    euros_retained = float(averted * mean_annual_margin - offer_spend)
 
     return Scorecard(
         churn_treatment=churn_t,
