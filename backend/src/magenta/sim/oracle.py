@@ -109,39 +109,66 @@ class ResponseOracle:
         sub = int.from_bytes(h[:8], "big")
         return np.random.default_rng(sub)
 
-    def _offer_effect(self, customer: Customer, offer) -> float:
-        """Signed contribution of contacting with `offer` to the churn logit.
+    def _offer_effect(self, customer: Customer, offer, include_benefit: bool = True) -> float:
+        """Signed contribution of `offer` to the churn logit, split into two
+        INDEPENDENTLY-gated components (Finding 1 fix):
 
-        Negative => reduces churn (good save). Positive => increases churn
-        (e.g. contacting a sleeping dog). Includes segment responsiveness,
-        offer-cause fit, and the sleeping-dog contact penalty.
+        - contact_penalty (SLEEPING_DOG only): fires whenever this is called
+          at all, i.e. whenever `offer is not None` in churn_prob. Contact
+          itself — not acceptance — is what harms a sleeping dog (the
+          annoyance / wake-up effect from the governing spec: "sleeping-dogs
+          get a positive contact_penalty -> contacting them increases
+          churn"). Always included regardless of `include_benefit`.
+        - benefit (segment_responsiveness * cause-fit): only included when
+          `include_benefit` is True (i.e. the offer was actually ACCEPTED —
+          an unaccepted offer can't help). Additive with contact_penalty,
+          not either/or: an accepted offer to a sleeping dog still pays the
+          full contact penalty (segment_responsiveness[SLEEPING_DOG] == 0.0
+          in the frozen YAML makes its own benefit zero anyway, but the two
+          terms are computed independently on purpose).
+
+        Negative net value => reduces churn (good save). Positive => increases
+        churn (contact penalty dominates, e.g. a sleeping dog).
         """
         hs = self.hidden[customer.customer_id]
         seg = hs.persuadable_segment
 
-        # sleeping dogs: contact HARMS regardless of fit
-        if seg == Segment.SLEEPING_DOG:
-            return self.params.sleeping_dog_contact_penalty
+        contact_penalty = (
+            self.params.sleeping_dog_contact_penalty if seg == Segment.SLEEPING_DOG else 0.0
+        )
 
-        resp = self.params.segment_responsiveness.get(seg.value, 0.0)
-        arm = getattr(offer, "arm", None)
-        arm_name = arm.value if hasattr(arm, "value") else str(arm)
-        fits = set(getattr(offer, "fits_causes", [])) or _ARM_FITS.get(arm_name, set())
+        benefit = 0.0
+        if include_benefit:
+            resp = self.params.segment_responsiveness.get(seg.value, 0.0)
+            arm = getattr(offer, "arm", None)
+            arm_name = arm.value if hasattr(arm, "value") else str(arm)
+            fits = set(getattr(offer, "fits_causes", [])) or _ARM_FITS.get(arm_name, set())
 
-        # cause-fit: does the offer address this customer's live event causes?
-        # own stream ("effect") — independent of the base-churn "events" stream
-        # and the "accept" stream, so it never perturbs either.
-        rng = self._rng(customer.customer_id, "effect")
-        events = generate_events(customer, hs, rng)
-        live_causes = {e.kind.value for e in events}
-        fit = 1.0 if (fits & live_causes) else 0.35  # some help even without exact fit
+            # cause-fit: does the offer address this customer's live event causes?
+            # own stream ("effect") — independent of the base-churn "events" stream
+            # and the "accept"/"churn" streams, so it never perturbs any of them.
+            rng = self._rng(customer.customer_id, "effect")
+            events = generate_events(customer, hs, rng)
+            live_causes = {e.kind.value for e in events}
+            fit = 1.0 if (fits & live_causes) else 0.35  # some help even without exact fit
 
-        # positive magnitude of help, then made negative (reduces churn)
-        magnitude = resp * fit
-        return -magnitude
+            # positive magnitude of help, then made negative (reduces churn)
+            magnitude = resp * fit
+            benefit = -magnitude
 
-    def churn_prob(self, customer: Customer, offer) -> float:
-        """Deterministic churn probability (no random draw) — for tests/analysis."""
+        return contact_penalty + benefit
+
+    def churn_prob(self, customer: Customer, offer, accepted: bool | None = None) -> float:
+        """Deterministic churn probability (no random draw) — for tests/analysis.
+
+        `accepted` gates only the BENEFIT half of the offer effect:
+          - None (default) or True: benefit included — the historical "what
+            would this offer do" analysis view for callers that don't model
+            acceptance explicitly (e.g. the sanity tests below).
+          - False: benefit excluded (a declined offer can't help), but the
+            SLEEPING_DOG contact penalty still applies — contact, not
+            acceptance, triggers it. This is what `outcome()` passes.
+        """
         p = self.params
         hs = self.hidden[customer.customer_id]
         rng = self._rng(customer.customer_id, "events")
@@ -155,10 +182,14 @@ class ResponseOracle:
             + p.churn_A3 * hs.competitor_pull
         )
         if offer is not None:
-            logit += p.churn_BETA_OFFER * (-self._offer_effect(customer, offer))
+            offer_effect = self._offer_effect(
+                customer, offer, include_benefit=accepted is not False
+            )
+            logit += p.churn_BETA_OFFER * (-offer_effect)
             # NOTE: offer_effect is negative-for-help; BETA_OFFER is negative;
             # multiply by -effect so a good (negative) effect * negative BETA
-            # nets to reduced churn. Sleeping-dog (positive effect) raises churn.
+            # nets to reduced churn. Sleeping-dog contact penalty (positive
+            # effect) raises churn regardless of `accepted`.
         return float(_sigmoid(logit))
 
     def accept_prob(self, customer: Customer, offer) -> float:
@@ -196,13 +227,19 @@ class ResponseOracle:
         the variance-reduction property CRN depends on; sharing one rng
         sequentially between the accept draw and the churn draw would shift
         the churn draw's position whenever an offer is present and break it.
+
+        Finding 1 fix: we pass `offer` itself through to churn_prob (never
+        nulled) together with the realized `accepted` flag, instead of the
+        old `offer if accepted else None`. Nulling the offer entirely on
+        decline silently dropped the SLEEPING_DOG contact penalty for anyone
+        who said no — contact (offer is not None), not acceptance, is what
+        must trigger that penalty. `churn_prob` uses `accepted` only to gate
+        the separate BENEFIT term (an unaccepted offer still can't help).
         """
         accepted = False
         if offer is not None:
             accept_rng = self._rng(customer.customer_id, "accept")
             accepted = bool(accept_rng.random() < self.accept_prob(customer, offer))
-        # only an ACCEPTED offer exerts its save effect; a declined offer = no help
-        effective_offer = offer if accepted else None
         churn_rng = self._rng(customer.customer_id, "churn")
-        churned = bool(churn_rng.random() < self.churn_prob(customer, effective_offer))
+        churned = bool(churn_rng.random() < self.churn_prob(customer, offer, accepted=accepted))
         return Outcome(accepted=accepted, churned=churned)
