@@ -1,8 +1,12 @@
 """Generate training labels for the risk and uplift models.
 
-Two oracle runs on the SAME population (common random numbers via shared seed):
+Two INDEPENDENT oracle runs on the SAME population (control uses `seed`, the
+randomized-offer run uses `seed + 1` — deliberately NOT CRN-paired; each run
+yields valid unbiased labels for its own downstream model):
   1. NO-offer run  -> churn labels for the risk model.
-  2. randomized-offer run (50% treated, random eligible arm) -> uplift labels.
+  2. randomized-offer run (~50% treated, random eligible arm) -> uplift labels.
+     Note: ~7% of customers have no eligible non-NO_ACTION arm and fall back to
+     control, so the realized treated share sits near 0.47, not exactly 0.50.
 
 Hidden state is used ONLY through ``ResponseOracle.outcome``; never as a feature.
 """
