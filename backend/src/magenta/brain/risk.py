@@ -17,10 +17,11 @@ from sklearn.frozen import FrozenEstimator
 from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 
+from magenta.config import data_dir
 from magenta.brain.features import FEATURE_NAMES, featurize
 from magenta.sim.population import Customer
 
-_DEFAULT_PATH = Path("data/models/risk.joblib")
+_DEFAULT_PATH = data_dir() / "models" / "risk.joblib"
 
 # Human-readable labels for driver narration (LLM narrates these, never re-derives).
 _FEATURE_LABELS: dict[str, str] = {

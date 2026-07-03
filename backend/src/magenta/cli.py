@@ -8,7 +8,7 @@ import typer
 
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
-from magenta.config import configs_dir, load_models
+from magenta.config import configs_dir, data_dir, load_models
 from magenta.experiment import (
     NoActionPolicy,
     RulesPolicy,
@@ -40,7 +40,7 @@ app.add_typer(risk_app, name="risk")
 def risk_train(
     n: int = typer.Option(8000, help="training population size"),
     seed: int = typer.Option(7, help="seed"),
-    out: str = typer.Option("data/models/risk.joblib", help="output path"),
+    out: str = typer.Option(str(data_dir() / "models" / "risk.joblib"), help="output path"),
 ) -> None:
     """Train a churn-risk model on synthetic data."""
     td = build_training_data(n=n, seed=seed)
@@ -53,7 +53,7 @@ def risk_train(
 def risk_eval(
     n: int = typer.Option(4000, help="eval population size"),
     seed: int = typer.Option(99, help="seed"),
-    model: str = typer.Option("data/models/risk.joblib", help="model path"),
+    model: str = typer.Option(str(data_dir() / "models" / "risk.joblib"), help="model path"),
 ) -> None:
     """Evaluate a risk model on a held-out population."""
     m = RiskModel.load(model)
@@ -70,7 +70,7 @@ def risk_score(
     customer_id: str = typer.Argument(..., help="customer id, e.g. SIM-0"),
     n: int = typer.Option(500, help="population to draw the customer from"),
     seed: int = typer.Option(7, help="seed"),
-    model: str = typer.Option("data/models/risk.joblib", help="model path"),
+    model: str = typer.Option(str(data_dir() / "models" / "risk.joblib"), help="model path"),
 ) -> None:
     """Score a customer for churn risk."""
     m = RiskModel.load(model)
