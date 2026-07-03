@@ -139,6 +139,11 @@ class RiskModel:
         drivers = self._top_drivers(x)
         return RiskAssessment(p_churn=p, band=_band_for(p), drivers=drivers)
 
+    def p_churn_batch(self, customers: list[Customer]) -> np.ndarray:
+        """Vectorized calibrated churn probabilities — no SHAP (use for cohorts;
+        per-customer TreeSHAP in score() is ~100x slower and only needed for drivers)."""
+        return self._p_churn(self._matrix(customers))
+
     def _top_drivers(self, x: np.ndarray, k: int = 5) -> list[Driver]:
         explainer = shap.TreeExplainer(self._raw)
         sv = explainer.shap_values(x)

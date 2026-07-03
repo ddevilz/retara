@@ -183,9 +183,9 @@ def uplift_report(
     qini = um.qini(td.customers, td.treated, td.retained)
 
     counts: Counter = Counter()
-    for c, tau in zip(td.customers, taus):
-        p = rm.score(c).p_churn
-        counts[classify_segment(p, float(tau)).value] += 1
+    p_churns = rm.p_churn_batch(td.customers)
+    for p, tau in zip(p_churns, taus):
+        counts[classify_segment(float(p), float(tau)).value] += 1
 
     typer.echo(f"Qini (T-learner): {qini:.4f}")
     typer.echo("predicted segments:")
