@@ -7,6 +7,12 @@ import time
 import typer
 
 from magenta.config import configs_dir, load_models
+from magenta.experiment import (
+    NoActionPolicy,
+    RulesPolicy,
+    Scorecard,
+    run_experiment,
+)
 from magenta.llm import chat
 from magenta.sim.oracle import ResponseOracle, SimParams
 from magenta.sim.population import generate_population
@@ -59,6 +65,43 @@ def smoke() -> None:
     typer.echo(f"model:   {model}")
     typer.echo(f"reply:   {reply}")
     typer.echo(f"latency: {latency_ms:.0f} ms")
+
+
+def _format_scorecard(sc: Scorecard, policy: str) -> str:
+    lines = [
+        f"SCORECARD (policy={policy})",
+        "",
+        f"  N TREATMENT       {sc.n_treatment}",
+        f"  N HOLDOUT         {sc.n_holdout}",
+        f"  CHURN TREATMENT   {sc.churn_treatment:6.2%}",
+        f"  CHURN HOLDOUT     {sc.churn_holdout:6.2%}",
+        f"  ATE               {sc.ate:+.4f}",
+        f"  CI [95%]          [{sc.ci_low:+.4f}, {sc.ci_high:+.4f}]",
+        f"  OFFERS MADE       {sc.offers_made}",
+        f"  ACCEPTANCE RATE   {sc.acceptance_rate:6.2%}",
+        f"  WASTED OFFER RATE {sc.wasted_offer_rate:6.2%}",
+        f"  SLEEPING DOGS HIT {sc.sleeping_dogs_contacted}",
+        f"  OFFER SPEND       {sc.offer_spend:10.2f}",
+        f"  EUROS RETAINED    {sc.euros_retained:10.2f}",
+    ]
+    return "\n".join(lines)
+
+
+@app.command()
+def experiment(
+    policy: str = typer.Option("rules", "--policy", help="rules | noaction"),
+    n: int = typer.Option(10000, "-n", "--n", help="population size"),
+    seed: int = typer.Option(42, "--seed", help="seed (population + CRN + bootstrap)"),
+    budget: float = typer.Option(None, "--budget", help="optional total offer-spend cap"),
+) -> None:
+    """Run a single-period two-arm RCT and print the Scorecard (ATE +/- bootstrap CI)."""
+    policies = {"rules": RulesPolicy, "noaction": NoActionPolicy}
+    if policy not in policies:
+        typer.secho(f"unknown policy {policy!r}; choose from {sorted(policies)}",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
+    sc = run_experiment(policies[policy](), n=n, seed=seed, budget=budget)
+    typer.echo(_format_scorecard(sc, policy))
 
 
 if __name__ == "__main__":
