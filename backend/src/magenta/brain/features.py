@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from magenta.offers import OfferDecision  # noqa: F401  (kept for downstream import parity)
 from magenta.sim.population import Customer
 
 NPS_MISSING_SENTINEL = -999.0
