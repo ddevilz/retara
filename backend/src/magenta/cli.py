@@ -82,7 +82,7 @@ def _format_scorecard(sc: Scorecard, policy: str) -> str:
         f"  WASTED OFFER RATE {sc.wasted_offer_rate:6.2%}",
         f"  SLEEPING DOGS HIT {sc.sleeping_dogs_contacted}",
         f"  OFFER SPEND       {sc.offer_spend:10.2f}",
-        f"  EUROS RETAINED    {sc.euros_retained:10.2f}",
+        f"  EUROS RETAINED (NET)    {sc.euros_retained:10.2f}",
     ]
     return "\n".join(lines)
 
