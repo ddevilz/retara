@@ -14,7 +14,7 @@ from sklift.metrics import qini_auc_score
 
 from magenta.brain.features import featurize
 from magenta.config import data_dir
-from magenta.sim.population import Customer
+from magenta.sim.population import Customer, Segment
 
 _DEFAULT_PATH = data_dir() / "models" / "uplift.joblib"
 
@@ -105,3 +105,24 @@ class UpliftModel:
         m._m_control = blob["control"]
         m._m_single = blob["single"]
         return m
+
+
+def classify_segment(
+    p_churn: float,
+    tau: float,
+    risk_floor: float = 0.25,
+    tau_min: float = 0.02,
+) -> Segment:
+    """Predicted persuadability segment from calibrated risk + estimated uplift.
+
+    Never reads hidden state — this is the model's *prediction* of the segment.
+    Order matters: sleeping-dog (clearly negative uplift) is checked before the
+    near-zero lost-cause case so a strong backfire is not mislabelled.
+    """
+    if p_churn < risk_floor:
+        return Segment.SURE_THING
+    if tau < -tau_min:
+        return Segment.SLEEPING_DOG
+    if tau <= 0.0:
+        return Segment.LOST_CAUSE
+    return Segment.PERSUADABLE
