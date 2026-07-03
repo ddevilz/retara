@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 
+import numpy as np
 import typer
 
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
+from magenta.brain.uplift import UpliftModel, classify_segment
 from magenta.config import configs_dir, data_dir, load_models
 from magenta.experiment import (
     NoActionPolicy,
@@ -160,6 +163,38 @@ def experiment(
         raise typer.Exit(code=2)
     sc = run_experiment(policies[policy](), n=n, seed=seed, budget=budget)
     typer.echo(_format_scorecard(sc, policy))
+
+
+uplift_app = typer.Typer(help="Uplift model reporting.")
+app.add_typer(uplift_app, name="uplift")
+
+
+@uplift_app.command("report")
+def uplift_report(
+    n: int = typer.Option(6000, help="population size"),
+    seed: int = typer.Option(31, help="seed"),
+) -> None:
+    """Train an uplift model and report segment counts, Qini score, and tau deciles."""
+    td = build_training_data(n=n, seed=seed)
+    um = UpliftModel().fit(td.customers, td.treated, td.retained)
+    rm = RiskModel().fit(td.customers, td.churned)
+
+    taus = um.tau_batch(td.customers)
+    qini = um.qini(td.customers, td.treated, td.retained)
+
+    counts: Counter = Counter()
+    for c, tau in zip(td.customers, taus):
+        p = rm.score(c).p_churn
+        counts[classify_segment(p, float(tau)).value] += 1
+
+    typer.echo(f"Qini (T-learner): {qini:.4f}")
+    typer.echo("predicted segments:")
+    for seg in ("PERSUADABLE", "SURE_THING", "LOST_CAUSE", "SLEEPING_DOG"):
+        typer.echo(f"  {seg:<14} {counts.get(seg, 0)}")
+    typer.echo("tau deciles:")
+    deciles = np.percentile(taus, np.arange(0, 101, 10))
+    for i, v in enumerate(deciles):
+        typer.echo(f"  decile {i*10:>3}%  {v:+.4f}")
 
 
 if __name__ == "__main__":
