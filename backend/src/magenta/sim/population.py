@@ -117,6 +117,94 @@ _SEG_INTERCEPT = {
 _SEG_ORDER = [Segment.PERSUADABLE, Segment.SURE_THING, Segment.LOST_CAUSE, Segment.SLEEPING_DOG]
 
 
+# --- hidden -> observable coupling constants --------------------------------
+# calibrated 2026-07-03 per spec §5.6 closed-loop requirement (risk AUC
+# 0.80-0.85 band); response params in sim_params.yaml untouched/frozen.
+#
+# Diagnosis (see .superpowers/sdd/task-3.3-report.md): the oracle's churn
+# logit is dominated by the DIRECT theta_churn_base term (A1=0.85 on a
+# unit-variance draw), not by event_sum or competitor_pull (A3=0.90 on a
+# Beta(2,5) draw with variance ~0.026). An observable-only model can only
+# approach the oracle's discriminative ceiling if theta_churn_base (and, to a
+# much smaller extent, competitor_pull) is well-reflected in the observable
+# fields it trains on. These constants raise that reflection strength.
+# theta_price_sens is deliberately left weakly coupled (only late_payments)
+# -- it does not enter the churn oracle at all, so amplifying it would
+# inflate persuadable_segment's observable recoverability (spec anti-
+# circularity band: 0.56-0.85) without buying any risk-AUC headroom.
+#
+# TRADE-OFF FOUND (see "Calibration fix report" appended to
+# task-3.3-report.md for the full curve): pushing these couplings hard
+# enough to land risk AUC in [0.78, 0.88] structurally drags the realized
+# base churn rate up to ~0.33-0.34 (vs. the frozen A0's calibrated ~0.265),
+# because every event-firing-probability channel is bounded in [0, cap] --
+# steepening a channel's response to theta_churn_base saturates the cap for
+# the theta>0 half of the population before it saturates the floor for the
+# theta<0 half, biasing the population MEAN upward as a side effect of
+# widening the SPREAD. That bias cannot be fully offset by lowering
+# intercepts alone (verified: even near-zero intercepts only bring the mean
+# to ~0.30-0.31 once slopes are steep enough for AUC~0.78). We chose to
+# preserve churn~26.5% (a spec target with an explicit CLI verification
+# command) over the full risk-AUC aim, landing at AUC~0.75-0.76 (n=6k/3k;
+# comfortably inside the actual failing test's [0.72, 0.92] band, short of
+# the tighter [0.78, 0.88] internal aim). All constants below are scaled to
+# ~40% of the slope / ~18% of the intercept of the "AUC-maximizing, ignore
+# churn-rate" configuration that was measured during tuning.
+#
+# Usage <- theta_churn_base: linear in theta (zero-mean over the population,
+# so the marginal mean data_gb_used_p50 is preserved) with reduced Gaussian
+# noise SD to raise the theta signal's share of total variance.
+_USAGE_MEAN_FRAC = 0.75
+_USAGE_NOISE_SD_FRAC = 0.16
+_USAGE_CHURN_COEF = 0.52
+
+# Overage events (90d) <- usage/allowance ratio (itself theta_churn_base-
+# coupled above): continuous Poisson rate instead of a binary threshold, so
+# the graded signal in `usage` isn't discarded.
+_OVERAGE_RATE_BASE = 0.054
+_OVERAGE_RATE_SLOPE = 7.2
+
+# Support tickets (90d) <- theta_churn_base: two-sided (was one-sided
+# max(0, theta)) Poisson rate, floored above zero. Two-sided roughly
+# preserves the population mean ticket count (theta is zero-mean) while
+# substantially increasing the signal slope. theta_churn_base is the
+# DOMINANT term in the churn oracle (A1=0.85, vs A3=0.90 on competitor_pull's
+# tiny Beta(2,5) variance) so this and the overage/NPS channels above/below
+# carry most of the achievable observable signal -- see dropped_calls below
+# for why the competitor_pull channel is deliberately NOT pushed as hard.
+_TICKETS_BASE = 0.099
+_TICKETS_CHURN_COEF = 7.2
+_TICKETS_MIN_LAMBDA = 0.05
+
+# Dropped calls (30d) <- competitor_pull: kept modest on purpose. Pushing
+# this channel harder (tried up to coef=10.5) saturated p_dropped's firing
+# probability for ~70% of the population regardless of pull -- because
+# competitor_pull's own population variance is tiny (Beta(2,5) Var~0.026),
+# a Poisson-count proxy that reaches saturation this easily is spending
+# churn-rate budget on noise, not signal. Left near the original scale, with
+# only a mild bump.
+_DROPPED_BASE = 0.108
+_DROPPED_COMPETITOR_COEF = 2.2
+
+# Last NPS <- theta_churn_base: stronger coefficient + tighter noise SD.
+# ~40% missingness (independent of theta) is unchanged. NOT scaled down with
+# the churn-rate correction above -- NPS never feeds churn_prob/event_sum
+# (it's a RiskModel-only feature), so it is a "free" theta_churn_base proxy
+# channel with zero base-churn-rate cost. Kept at full strength.
+_NPS_CHURN_COEF = 5.5
+_NPS_NOISE_SD = 0.85
+
+# Late payments (12m): tried adding a theta_churn_base term here too (it
+# doesn't feed churn_prob/event_sum, so -- like NPS -- it would have been a
+# free proxy channel). Reverted: because `rng.poisson`'s variate algorithm
+# consumes a lambda-dependent amount of the underlying bitstream, changing
+# this lambda shifts every subsequent rng draw for the *rest of the
+# population* -- an uncontrolled reshuffle, not an additive signal. Measured
+# net effect across 5 seed pairs was negative (mean risk AUC 0.727 vs 0.740
+# without it) purely from that reshuffle, not from any real information
+# content. Left theta_price_sens-only, as originally.
+
+
 def _sample_segment(
     rng: np.random.Generator,
     theta_churn_base: float,
@@ -184,18 +272,29 @@ def generate_population(n: int, seed: int) -> tuple[list[Customer], HiddenStore]
         monthly = float(np.clip(rng.normal(mc_par["mean"], mc_par["sd"]), 15.0, 200.0))
         total = float(round(monthly * tenure * rng.uniform(0.92, 1.05), 2))
         alw = float(allowance[plan])
-        # usage: higher churn-risk customers slightly over-use (noisy correlation)
+        # usage: higher churn-risk customers over-use more (noisy correlation)
         usage = float(np.clip(
-            rng.normal(alw * 0.75, alw * 0.30) + 0.4 * alw * theta_churn_base * 0.1,
+            rng.normal(alw * _USAGE_MEAN_FRAC, alw * _USAGE_NOISE_SD_FRAC)
+            + alw * _USAGE_CHURN_COEF * theta_churn_base,
             0.1, alw * 2.2,
         ))
-        overage = int(max(0, rng.poisson(1.5 if usage > alw else 0.3)))
-        dropped = int(max(0, rng.poisson(1.0 + 1.5 * competitor_pull)))
-        tickets = int(max(0, rng.poisson(0.8 + 0.6 * max(0.0, theta_churn_base))))
+        # continuous in the usage/allowance ratio (was a coarse binary
+        # threshold) so overage_events_90d carries graded, not just
+        # thresholded, theta_churn_base signal via `usage`.
+        overage_rate = float(np.clip(
+            _OVERAGE_RATE_BASE + _OVERAGE_RATE_SLOPE * (usage / alw - 1.0),
+            0.05, 6.0,
+        ))
+        overage = int(max(0, rng.poisson(overage_rate)))
+        dropped = int(max(0, rng.poisson(_DROPPED_BASE
+                                         + _DROPPED_COMPETITOR_COEF * competitor_pull)))
+        tickets = int(max(0, rng.poisson(max(
+            _TICKETS_MIN_LAMBDA, _TICKETS_BASE + _TICKETS_CHURN_COEF * theta_churn_base
+        ))))
         late = int(max(0, rng.poisson(0.4 + 0.3 * theta_price_sens
                                       if theta_price_sens > 0 else 0.2)))
         nps = None if rng.random() < nps_missing else int(np.clip(
-            round(rng.normal(7.0 - theta_churn_base, 2.0)), 0, 10))
+            round(rng.normal(7.0 - _NPS_CHURN_COEF * theta_churn_base, _NPS_NOISE_SD)), 0, 10))
         device_age = int(np.clip(round(rng.normal(18.0, 10.0)), 0, 60))
         if contract == "MONTH_TO_MONTH":
             end_days = int(rng.integers(0, 30))
