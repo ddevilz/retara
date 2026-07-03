@@ -1,0 +1,30 @@
+# FROZEN sim params — committed before any agent code. Do NOT tune to flatter the agent.
+# Churn hazard logit: A0 + A1*theta_churn_base + A2*sum(event mult) + A3*competitor_pull + BETA_OFFER*offer_effect
+churn:
+  A0: -1.10          # base intercept -> ~0.25 base churn with average latent state
+  A1: 0.85           # weight on hidden churn propensity
+  A2: 0.70           # weight on summed event hazard multipliers
+  A3: 0.90           # weight on competitor pull
+  BETA_OFFER: -1.60  # a good offer REDUCES churn (negative)
+
+# Accept logit: G0 + G1*theta_price_sens*offer_value_norm + G2*offer_fit + G3*trust(tenure) - G4*fatigue
+accept:
+  G0: -0.40
+  G1: 1.30           # price-sensitive customers respond to offer value
+  G2: 1.10           # offer-cause fit drives acceptance
+  G3: 0.60           # trust grows with tenure
+  G4: 0.50           # contact fatigue lowers acceptance
+
+# Segment responsiveness to a well-fitting offer (multiplies offer_effect magnitude)
+segment_responsiveness:
+  PERSUADABLE: 1.00
+  SURE_THING: 0.15      # would stay anyway -> little uplift
+  LOST_CAUSE: 0.10      # leaving regardless
+  SLEEPING_DOG: 0.0     # offer channel gives no help...
+
+# ...and SLEEPING_DOGs are actively harmed by being contacted (contact -> churn UP)
+sleeping_dog_contact_penalty: 0.80
+
+# trust/fatigue shaping
+trust_tenure_halflife_months: 24.0
+fatigue_per_recent_contact: 1.0
