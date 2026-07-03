@@ -6,8 +6,11 @@ import time
 
 import typer
 
-from magenta.config import load_models
+from magenta.config import configs_dir, load_models
 from magenta.llm import chat
+from magenta.sim.oracle import ResponseOracle, SimParams
+from magenta.sim.population import generate_population
+from magenta.sim.stats import format_stats, population_stats
 
 app = typer.Typer(help="Magenta Retain — churn retention agent CLI.", no_args_is_help=True)
 
@@ -15,6 +18,26 @@ app = typer.Typer(help="Magenta Retain — churn retention agent CLI.", no_args_
 @app.callback()
 def callback() -> None:
     """Magenta Retain — churn retention agent CLI."""
+
+
+sim_app = typer.Typer(help="Simulator commands.", no_args_is_help=True)
+app.add_typer(sim_app, name="sim")
+
+
+@sim_app.command("generate")
+def sim_generate(
+    n: int = typer.Option(10000, "-n", "--n", help="number of customers"),
+    seed: int = typer.Option(42, "--seed", help="population + oracle seed"),
+    stats: bool = typer.Option(False, "--stats", help="print summary stats"),
+) -> None:
+    """Generate a synthetic population; optionally print distribution stats."""
+    customers, hidden = generate_population(n, seed=seed)
+    if stats:
+        params = SimParams.load(configs_dir() / "sim_params.yaml")
+        oracle = ResponseOracle(hidden, params, seed=seed)
+        typer.echo(format_stats(population_stats(customers, hidden, oracle)))
+    else:
+        typer.echo(f"generated {len(customers)} customers (seed={seed})")
 
 
 @app.command()
