@@ -8,6 +8,9 @@ from collections import Counter
 import numpy as np
 import typer
 
+from magenta.brain.bandit import ThompsonBandit
+from magenta.brain.features import FEATURE_NAMES, featurize
+from magenta.brain.policy import BrainPolicy
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel, classify_segment
@@ -19,8 +22,9 @@ from magenta.experiment import (
     run_experiment,
 )
 from magenta.llm import chat
+from magenta.offers import Arm, OfferCatalog, OfferDecision
 from magenta.sim.oracle import ResponseOracle, SimParams
-from magenta.sim.population import generate_population
+from magenta.sim.population import Segment, generate_population
 from magenta.sim.stats import format_stats, population_stats
 
 app = typer.Typer(help="Magenta Retain — churn retention agent CLI.", no_args_is_help=True)
@@ -195,6 +199,98 @@ def uplift_report(
     deciles = np.percentile(taus, np.arange(0, 101, 10))
     for i, v in enumerate(deciles):
         typer.echo(f"  decile {i*10:>3}%  {v:+.4f}")
+
+
+bandit_app = typer.Typer(help="Contextual bandit training loop.")
+app.add_typer(bandit_app, name="bandit")
+
+
+@bandit_app.command("episodes")
+def bandit_episodes(
+    episodes: int = typer.Option(30, "-e", "--episodes", help="number of episodes"),
+    n: int = typer.Option(1000, help="cohort size per episode"),
+    seed: int = typer.Option(3, help="base seed"),
+) -> None:
+    """Run E episodes (fresh cohort -> engage-gate + bandit arm choice -> oracle
+    outcome -> bandit.update) with a SHARED, persistent bandit posterior and print
+    the measured net-margin convergence curve.
+
+    This is a measured-convergence demonstration over logged episodes, not a
+    claim of live self-improvement in production.
+
+    PERF: per-customer ``RiskModel.score()`` runs TreeSHAP and is ~100x slower
+    than batch scoring, so each episode scores the whole cohort once via
+    ``p_churn_batch``/``tau_batch`` and replicates BrainPolicy's engage-gate +
+    arm-selection with the precomputed values, instead of calling
+    ``BrainPolicy.decide()`` (which internally calls the slow per-customer
+    ``score()``) in the hot loop.
+    """
+    # Train risk + uplift once on a held-out slice; the bandit learns online.
+    td = build_training_data(n=max(n, 3000), seed=seed)
+    rm = RiskModel().fit(td.customers, td.churned)
+    um = UpliftModel().fit(td.customers, td.treated, td.retained)
+    cat = OfferCatalog.load(configs_dir() / "offers.yaml")
+    params = SimParams.load(configs_dir() / "sim_params.yaml")
+    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm))
+    policy = BrainPolicy(rm, um, bandit, cat)
+
+    typer.echo(
+        "measured convergence across episodes (bandit posterior persists "
+        "in-process; not a live self-improving claim)"
+    )
+    typer.echo(
+        f"{'episode':<8} {'net_margin_per_intervention':<28} "
+        f"{'NO_ACTION_share':<16} {'cumulative_net_margin':>22}"
+    )
+    cumulative_net_margin = 0.0
+    for ep in range(1, episodes + 1):
+        customers, hidden = generate_population(n, seed=seed + 100 + ep)
+        oracle = ResponseOracle(hidden, params, seed=seed + 200 + ep)
+        policy.reset_budget()
+
+        # Batch score the whole cohort once (fast); no per-customer .score().
+        p_churns = rm.p_churn_batch(customers)
+        taus = um.tau_batch(customers)
+
+        interventions = 0
+        no_action = 0
+        total_net = 0.0
+        for c, p_churn, tau in zip(customers, p_churns, taus):
+            # Mirrors BrainPolicy.decide()'s engage-gate: classify_segment's
+            # own risk_floor (0.25) already subsumes BrainPolicy's separate
+            # p_churn < _RISK_FLOOR check (same threshold), so PERSUADABLE
+            # alone is the equivalent gate here.
+            segment = classify_segment(float(p_churn), float(tau))
+            if segment is not Segment.PERSUADABLE:
+                no_action += 1
+                continue
+
+            eligible = [a for a in cat.eligible(c) if a != Arm.NO_ACTION]
+            if not eligible:
+                no_action += 1
+                continue
+
+            x = featurize(c)
+            arm, propensity = bandit.select(x, eligible=eligible)
+            decision = OfferDecision(
+                arm=arm,
+                cost=cat.cost(arm),
+                rationale=f"persuadable p_churn={p_churn:.2f} tau={tau:.3f}",
+                propensity=propensity,
+            )
+            out = oracle.outcome(c, decision)
+            retained = 0 if out.churned else 1
+            reward = retained * float(c.gross_margin_monthly) * 12 - decision.cost
+            bandit.update(x, decision.arm, reward)
+            total_net += reward
+            interventions += 1
+
+        npi = (total_net / interventions) if interventions else 0.0
+        share = no_action / len(customers)
+        cumulative_net_margin += total_net
+        typer.echo(
+            f"{ep:<8} {npi:<28.2f} {share:<16.3f} {cumulative_net_margin:>22.2f}"
+        )
 
 
 if __name__ == "__main__":
