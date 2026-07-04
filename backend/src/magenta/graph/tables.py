@@ -1,8 +1,10 @@
-"""SQLite tables backing the Guardrail and Act nodes.
+"""SQLite tables backing the Guardrail, Act, and audit-trail nodes.
 
 - GUARDRAIL_CONTACTS: frequency-cap ledger (§5.7). One row per proactive contact.
 - FULFILLMENTS: the idempotency ledger (§5.5 Act). UNIQUE on IDEMPOTENCY_KEY
   guarantees exactly-once fulfill even when a node re-runs after interrupt/resume.
+- AUDIT_LOG: one row per executed node per graph run (§5.5 / Task 6.6), flushed
+  by `magenta.graph.build.persist_audit` after `graph.invoke(...)` returns.
 
 All column names ALL_CAPS (CLAUDE.md convention; Postgres-fold-safe).
 """
@@ -31,10 +33,21 @@ CREATE TABLE IF NOT EXISTS FULFILLMENTS (
 )
 """
 
+_DDL_AUDIT_LOG = """
+CREATE TABLE IF NOT EXISTS AUDIT_LOG (
+    ID          INTEGER PRIMARY KEY AUTOINCREMENT,
+    NODE        TEXT NOT NULL,
+    CUSTOMER_ID TEXT NOT NULL,
+    TS          TEXT NOT NULL,
+    PAYLOAD     TEXT NOT NULL DEFAULT '{}'
+)
+"""
+
 
 def init_graph_tables(conn: sqlite3.Connection) -> None:
     conn.execute(_DDL_CONTACTS)
     conn.execute(_DDL_FULFILLMENTS)
+    conn.execute(_DDL_AUDIT_LOG)
     conn.commit()
 
 

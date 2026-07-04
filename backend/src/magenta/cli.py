@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from collections import Counter
 
@@ -15,13 +16,16 @@ from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel, classify_segment
 from magenta.config import configs_dir, data_dir, load_models
+from magenta.db import get_conn
 from magenta.experiment import (
     NoActionPolicy,
     RulesPolicy,
     Scorecard,
     run_experiment,
 )
-from magenta.llm import chat
+from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
+from magenta.graph.tables import init_graph_tables
+from magenta.llm import chat, chat_structured
 from magenta.offers import Arm, OfferCatalog, OfferDecision
 from magenta.sim.oracle import ResponseOracle, SimParams
 from magenta.sim.population import Segment, generate_population
@@ -289,6 +293,141 @@ def bandit_episodes(
         typer.echo(
             f"{ep:<8} {npi:<28.2f} {share:<16.3f} {cumulative_net_margin:>22.2f}"
         )
+
+
+## ---- appended by lab 6: single-customer graph walk (manual-test surface) ----
+
+
+class _GraphParams:
+    freq_cap_days = 14
+    freq_cap_max = 1
+    value_cap = 40.0
+
+
+class _ChatShim:
+    """Adapts module-level llm.chat/chat_structured to the deps.chat interface."""
+
+    def chat(self, role, messages, **kw):
+        return chat(role, messages, **kw)
+
+    def chat_structured(self, role, messages, model_cls):
+        return chat_structured(role, messages, model_cls)
+
+
+def _load_or_train_risk(seed: int) -> RiskModel:
+    """RiskModel.load() with NO argument uses the data_dir()-anchored default
+    path (fixes the brief's cwd-relative "data/risk.pkl" bug — that literal
+    only resolves if the process cwd happens to be the repo root, but these
+    commands are documented as `cd backend && uv run magenta ...`). If the
+    artifact is missing, train a small stand-in on the fly so the manual-test
+    surface still works end to end; `magenta risk train` remains the
+    authoritative way to get a properly-sized model."""
+    try:
+        return RiskModel.load()
+    except FileNotFoundError:
+        typer.echo(
+            "(no risk model artifact found; training a quick one on n=3000 -- "
+            "run `magenta risk train` for a properly-sized model)"
+        )
+        td = build_training_data(n=3000, seed=seed)
+        model = RiskModel().fit(td.customers, td.churned)
+        model.save()
+        return model
+
+
+def _load_or_train_uplift(seed: int) -> UpliftModel:
+    try:
+        return UpliftModel.load()
+    except FileNotFoundError:
+        typer.echo(
+            "(no uplift model artifact found; training a quick one on n=3000 -- "
+            "no persisted `uplift train` command exists yet)"
+        )
+        td = build_training_data(n=3000, seed=seed)
+        model = UpliftModel().fit(td.customers, td.treated, td.retained)
+        model.save()
+        return model
+
+
+def _pretty(state: dict) -> None:
+    def section(title, body):
+        typer.echo(typer.style(f"\n=== {title} ===", fg="magenta", bold=True))
+        typer.echo(body)
+
+    r = state.get("risk")
+    section("SENSE", f"p_churn={r.p_churn:.3f} band={r.band.value} "
+                     f"segment={r.segment.value} tau={r.tau_hat:.3f} "
+                     f"engage={r.engage} timing={r.timing.value}" if r else "(none)")
+    if r and not r.engage:
+        typer.echo(typer.style("\n— exited early: not engaged —", fg="yellow"))
+        return
+    d = state.get("diagnosis")
+    if d:
+        section("DIAGNOSE", f"tags={d.root_cause_tags} conf={d.confidence:.2f}\n{d.narrative}")
+    o = state.get("offer")
+    if o:
+        section("DECIDE", f"arm={o.arm.value} cost={o.cost} propensity={o.propensity:.3f}")
+    v = state.get("verdict")
+    if v:
+        section("GUARDRAIL", f"decision={v.decision} failed={v.failed_policies}")
+    f = state.get("fulfillment")
+    if f:
+        status = f.get("STATUS") or f.get("status")
+        if status == "SHADOW":
+            section("ACT", "holdout shadow-log (no fulfillment)")
+        else:
+            section("ACT", f"status={status} key={f.get('IDEMPOTENCY_KEY') or f.get('idempotency_key')}")
+    oc = state.get("outcome")
+    if oc:
+        section("OUTCOME", f"accepted={oc['accepted']} retained={oc['retained']} "
+                           f"reward={oc['reward']:.2f}")
+
+
+@app.command("run-one")
+def run_one(customer_id: str,
+            seed: int = typer.Option(7, help="population seed"),
+            campaign: str = typer.Option("CAMP-A", help="campaign id"),
+            holdout: bool = typer.Option(False, help="force holdout (shadow-log)")):
+    """Step ONE customer through the graph and pretty-print every node."""
+    customers, hidden = generate_population(n=1000, seed=seed)
+    by_id = {c.customer_id: c for c in customers}
+    if customer_id not in by_id:
+        customer_id = customers[abs(hash(customer_id)) % len(customers)].customer_id
+        typer.echo(f"(id not in seeded pop; using {customer_id})")
+    customer = by_id.get(customer_id, customers[0])
+
+    conn = get_conn()
+    init_graph_tables(conn)
+    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
+    try:
+        bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+    except sqlite3.OperationalError:
+        pass
+    sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+    deps = GraphDeps(
+        risk=_load_or_train_risk(seed),
+        uplift=_load_or_train_uplift(seed),
+        bandit=bandit,
+        catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+        oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
+        conn=conn, params=_GraphParams(), chat=_ChatShim(),
+        load_customer=lambda cid: customer,
+    )
+    with open_sqlite_saver() as saver:
+        deps.checkpointer = saver
+        graph = build_graph(deps)
+        init = {
+            "customer_id": customer.customer_id, "campaign_id": campaign,
+            "consent_flags": {"MARKETING": True},
+            "risk": None, "diagnosis": None, "offer": None, "verdict": None,
+            "fulfillment": None, "outcome": None, "messages": [], "audit_log": [],
+            "requires_approval": False, "holdout": holdout,
+        }
+        final = graph.invoke(
+            init, config={"configurable": {"thread_id": f"{customer.customer_id}:{campaign}"}})
+    persist_audit(conn, final.get("audit_log", []))
+    deps.bandit.save(conn)
+    _pretty(final)
 
 
 if __name__ == "__main__":
