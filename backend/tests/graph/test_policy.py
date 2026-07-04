@@ -3,6 +3,7 @@ import sqlite3
 import pytest
 
 from magenta.brain.uplift import Segment
+import magenta.graph.nodes as nodes_mod
 from magenta.graph.build import GraphDeps
 from magenta.graph.policy import AgentPolicy
 from magenta.graph.tables import init_graph_tables
@@ -49,3 +50,15 @@ def test_agent_policy_none_on_reject(customer, fakes, spy_chat, monkeypatch):
     fakes["catalog"]._cost = 20.0     # margin 2 < 5 => REJECT
     pol = AgentPolicy(_deps(customer, fakes, spy_chat, _conn()))
     assert pol.decide(customer) is None
+
+
+def test_decide_returns_none_on_no_action_collapse(customer, fakes, spy_chat, monkeypatch):
+    """When eligible arms collapse to [NO_ACTION] (empty catalog∩diagnosis
+    intersection), decide() must return None — a leaked NO_ACTION OfferDecision
+    is counted by run_experiment as a real offer (39% fake-offer corruption
+    measured in review)."""
+    monkeypatch.setattr(nodes_mod, "featurize", lambda c: [0.0])
+    fakes["bandit"]._arm = Arm.NO_ACTION
+    fakes["catalog"].eligible = lambda c: [Arm.NO_ACTION]
+    policy = AgentPolicy(_deps(customer, fakes, spy_chat, _conn()))
+    assert policy.decide(customer) is None

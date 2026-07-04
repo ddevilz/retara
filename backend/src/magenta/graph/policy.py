@@ -10,7 +10,7 @@ must not itself fulfill or count outcomes — otherwise we'd double-count.
 from __future__ import annotations
 
 from magenta.graph.build import GraphDeps, build_graph, persist_audit
-from magenta.offers import OfferDecision
+from magenta.offers import Arm, OfferDecision
 
 
 class AgentPolicy:
@@ -44,4 +44,11 @@ class AgentPolicy:
         verdict = final.get("verdict")
         if verdict is not None and verdict.decision == "REJECT":
             return None
-        return final.get("offer")
+        offer = final.get("offer")
+        # NO_ACTION must surface as None: run_experiment treats any non-None
+        # decision as a real offer (oracle draw + offers_made + acceptance),
+        # so leaking NO_ACTION corrupts the Scorecard (review measured 39%
+        # of an agent run's "offers" being fake NO_ACTION rows).
+        if offer is None or offer.arm is Arm.NO_ACTION:
+            return None
+        return offer
