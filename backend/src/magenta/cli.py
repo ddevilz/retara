@@ -20,6 +20,9 @@ from magenta.chat.persona import Archetype, PersonaAgent, make_persona
 from magenta.chat.runner import run_negotiation
 from magenta.config import configs_dir, data_dir, load_models
 from magenta.db import get_conn
+from magenta.evalx.golden import run_golden
+from magenta.evalx.hardchecks import scan_guardrail_compliance, scan_holdout_purity
+from magenta.evalx.judge import judge_sample
 from magenta.experiment import Scorecard, run_experiment
 from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scorecards
 from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
@@ -570,6 +573,52 @@ def chat(
                f"offer={result.offer_final.arm.value if result.offer_final else 'none'}")
     for t in result.transcript:
         typer.echo(f"  {t.speaker}: {t.text}")
+
+
+## ---- appended by lab 9 task 9.4: `eval report` CLI (golden + hard checks) ----
+
+eval_app = typer.Typer(help="Evaluation harness")
+app.add_typer(eval_app, name="eval")
+
+
+@eval_app.command("report")
+def eval_report(
+    judge: bool = typer.Option(False, "--judge", help="Also run a pairwise judge sample"),
+) -> None:
+    """Run golden scenarios + hard-check scans and print two tables.
+
+    Exits 1 if ANY golden scenario fails or either hard-check scan reports a
+    violation; exits 0 otherwise. `--judge` runs the LLM judge on a sample
+    and prints a directional win-rate line but never affects the exit code
+    (the judge is advisory, not a gate) -- passing an empty transcript
+    sample (`k=0`) here is a placeholder wiring point until a real
+    transcript corpus (lab 8 chat runs) is threaded through, so this branch
+    makes no network call and needs no API key.
+    """
+    conn = get_conn()
+
+    golden = run_golden()
+    typer.echo("=== Golden scenarios ===")
+    for r in golden:
+        mark = "PASS" if r.passed else "FAIL"
+        typer.echo(f"  [{mark}] {r.name}: {r.detail}")
+
+    holdout_viol = scan_holdout_purity(conn)
+    guardrail_viol = scan_guardrail_compliance(conn)
+    typer.echo("\n=== Hard checks ===")
+    typer.echo(f"  holdout_purity: {'PASS' if not holdout_viol else 'FAIL ' + str(holdout_viol)}")
+    typer.echo(f"  guardrail_compliance: "
+               f"{'PASS' if not guardrail_viol else 'FAIL ' + str(guardrail_viol)}")
+
+    if judge:
+        rep = judge_sample([], baseline_fn=lambda c: "", k=0)
+        typer.echo(f"\n=== Judge (directional) ===\n  win_rate={rep.win_rate} ties={rep.ties}")
+
+    golden_failed = any(not r.passed for r in golden)
+    hard_failed = bool(holdout_viol) or bool(guardrail_viol)
+    if golden_failed or hard_failed:
+        raise typer.Exit(code=1)
+    typer.echo("\nAll hard checks passed.")
 
 
 if __name__ == "__main__":
