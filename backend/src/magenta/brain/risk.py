@@ -145,7 +145,13 @@ class RiskModel:
         return self._p_churn(self._matrix(customers))
 
     def _top_drivers(self, x: np.ndarray, k: int = 5) -> list[Driver]:
-        explainer = shap.TreeExplainer(self._raw)
+        # Cache the TreeExplainer: rebuilding it per score() call was ~100x the
+        # cost of the shap_values computation itself (measured ~13min/rung at
+        # n=10k in the ablation ladder before this cache).
+        explainer = getattr(self, "_explainer", None)
+        if explainer is None:
+            explainer = shap.TreeExplainer(self._raw)
+            self._explainer = explainer
         sv = explainer.shap_values(x)
         # LightGBM binary may return a list [class0, class1]; take positive class.
         if isinstance(sv, list):
