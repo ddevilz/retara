@@ -67,6 +67,9 @@ class OfferCatalog(BaseModel):
     def cost(self, arm: Arm) -> float:
         return self.offers[arm].cost
 
+    def min_margin(self, arm: Arm) -> float:
+        return self.offers[arm].min_margin
+
     def eligible(self, customer: Customer) -> list[Arm]:
         """Arms this customer may receive. Deterministic; margin-safe; NO_ACTION always in."""
         out: list[Arm] = [Arm.NO_ACTION]

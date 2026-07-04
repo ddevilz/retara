@@ -39,3 +39,10 @@ def test_offer_decision_defaults():
     d = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0)
     assert d.rationale == ""
     assert d.propensity == 1.0
+
+
+def test_cost_and_min_margin_accessors_match_offer():
+    cat = OfferCatalog.load(configs_dir() / "offers.yaml")
+    for arm in Arm:
+        assert cat.cost(arm) == cat.get(arm).cost
+        assert cat.min_margin(arm) == cat.get(arm).min_margin
