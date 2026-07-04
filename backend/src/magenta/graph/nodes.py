@@ -271,9 +271,12 @@ def outcome(state: OverallState, deps) -> dict:
     # so it silently always evaluated to 0.0. The real field is
     # gross_margin_monthly; use direct attribute access (no getattr-default)
     # so a future rename fails loudly instead of silently defaulting.
-    margin = customer.gross_margin_monthly
+    # Annualized margin (x12) — MUST match the Lab-5 bandit-episodes reward scale
+    # (retained*margin*12 - cost, per the plan's ML contract): the same bandit
+    # posterior is updated from both paths, so mixed scales would corrupt it.
+    margin_annual = customer.gross_margin_monthly * 12.0
     cost = 0.0 if no_action else offer.cost
-    reward = (margin if retained else 0.0) - cost
+    reward = (margin_annual if retained else 0.0) - cost
 
     if not holdout and not no_action:
         deps.bandit.update(featurize(customer), offer.arm, reward)

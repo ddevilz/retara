@@ -246,10 +246,11 @@ def test_outcome_updates_bandit_and_computes_reward(customer, fakes, monkeypatch
     s = _state_with_diagnosis(customer)
     s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
     out = outcome(s, deps)
-    # accepted=True, churned=False => retained; reward = margin(22) - cost(8) = 14
-    assert out["outcome"]["reward"] == pytest.approx(14.0)
+    # accepted=True, churned=False => retained; reward = margin(22)*12 - cost(8) = 256
+    # (annualized to match the Lab-5 bandit-episodes reward scale)
+    assert out["outcome"]["reward"] == pytest.approx(256.0)
     assert out["outcome"]["retained"] is True
-    assert fakes["bandit"].updates == [(Arm.BILL_CREDIT, pytest.approx(14.0))]
+    assert fakes["bandit"].updates == [(Arm.BILL_CREDIT, pytest.approx(256.0))]
 
 
 def test_outcome_holdout_no_bandit_update(customer, fakes):
