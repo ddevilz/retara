@@ -261,3 +261,26 @@ def test_outcome_holdout_no_bandit_update(customer, fakes):
     s["holdout"] = True
     outcome(s, deps)
     assert fakes["bandit"].updates == []   # holdout never trains the bandit
+
+
+def test_no_action_equivalence_none_vs_arm(customer, fakes):
+    """guardrail/act treat offer=None and offer.arm==NO_ACTION identically:
+    trivially PASS, no fulfillment row, no contact record (pins the accepted
+    decide()-fallback deviation)."""
+    conn = sqlite3.connect(":memory:")
+    init_graph_tables(conn)
+    deps = Deps(conn=conn, params=Params(), catalog=fakes["catalog"],
+                load_customer=lambda cid: customer)
+    base = {"customer_id": "C1", "campaign_id": "K1", "consent_flags": {"marketing": True},
+            "holdout": False, "requires_approval": False, "audit_log": []}
+    no_action_offer = OfferDecision(arm=Arm.NO_ACTION, cost=0.0)
+
+    for offer in (None, no_action_offer):
+        state = dict(base, offer=offer)
+        v = guardrail(state, deps)
+        assert v["verdict"].decision == "PASS" and v["verdict"].failed_policies == []
+        a = act(dict(state, verdict=v["verdict"]), deps)
+        assert a["fulfillment"]["status"] in ("NO_ACTION", "SKIPPED", "NONE") or \
+            a["fulfillment"].get("IDEMPOTENCY_KEY") is None
+    assert conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0] == 0
+    assert conn.execute("SELECT count(*) FROM GUARDRAIL_CONTACTS").fetchone()[0] == 0
