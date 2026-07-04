@@ -14,8 +14,11 @@ until 7.6 reads it).
 """
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import replace
 
+from magenta.experiment import Scorecard, run_experiment
 from magenta.graph.build import GraphDeps
 from magenta.graph.policy import AgentPolicy
 from magenta.offers import Arm, OfferDecision
@@ -85,3 +88,36 @@ def make_policy(rung: str, deps: GraphDeps):
     if rung == "agent":
         return AgentPolicy(replace(deps, system2_enabled=True))
     raise ValueError(f"unknown rung: {rung}")
+
+
+def run_ladder(n: int, seed: int, deps_factory) -> dict[str, Scorecard]:
+    """Run every rung of RUNGS through `run_experiment` and return
+    `{rung: Scorecard}`, in RUNGS order.
+
+    `deps_factory(n, seed) -> GraphDeps` is called once per rung (fresh deps:
+    a new conn/bandit-prior each rung) so rungs don't leak state into each
+    other; `generate_population(n, seed=seed)` is deterministic, so every
+    rung's `run_experiment` call still sees the identical CRN population.
+    `noaction`/`rules` never touch `deps`, so `deps_factory` may return a
+    minimal stub for those (the CLI still builds the real one for all rungs).
+    """
+    results: dict[str, Scorecard] = {}
+    for rung in RUNGS:
+        deps = deps_factory(n, seed)
+        policy = make_policy(rung, deps)
+        results[rung] = run_experiment(policy, n=n, seed=seed)
+    return results
+
+
+def write_scorecards(path: str, ladder: dict) -> None:
+    """Write the ladder to THE CONTRACT SCHEMA labs 10-11 read exactly:
+    `{"rungs": [{"policy": rung, "scorecard": scorecard.model_dump()}, ...]}`
+    in RUNGS order (not dict-insertion order, so callers can rely on it even
+    if `ladder` was built out of order).
+    """
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    order = [r for r in RUNGS if r in ladder] + [r for r in ladder if r not in RUNGS]
+    payload = {"rungs": [{"policy": rung, "scorecard": ladder[rung].model_dump()}
+                         for rung in order]}
+    with open(path, "w") as fh:
+        json.dump(payload, fh, indent=2, default=str)

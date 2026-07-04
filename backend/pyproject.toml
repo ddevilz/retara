@@ -41,3 +41,6 @@ packages = ["src/magenta"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "slow: real end-to-end runs (trained model artifacts, LLM stubs) — deselected by default via `-m \"not slow\"`",
+]

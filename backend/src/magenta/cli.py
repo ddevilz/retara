@@ -19,7 +19,7 @@ from magenta.brain.uplift import UpliftModel, classify_segment
 from magenta.config import configs_dir, data_dir, load_models
 from magenta.db import get_conn
 from magenta.experiment import Scorecard, run_experiment
-from magenta.graph.ablation import RUNGS, make_policy
+from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scorecards
 from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
 from magenta.graph.tables import init_graph_tables
 from magenta.llm import chat, chat_structured
@@ -194,6 +194,62 @@ def experiment(
         )
     sc = run_experiment(make_policy(policy, deps), n=n, seed=seed, budget=budget)
     typer.echo(_format_scorecard(sc, policy))
+
+
+@app.command("ablation")
+def ablation(
+    n: int = typer.Option(10000, "-n", "--n", help="population size per rung"),
+    seed: int = typer.Option(7, "--seed", help="seed (population + CRN + bootstrap)"),
+) -> None:
+    """Run the 5-rung ablation ladder (§7), print a comparison table, and
+    write `data/scorecards.json` (the contract schema labs 10-11 read).
+
+    Each rung gets a freshly-built `GraphDeps` (own conn/cold bandit prior)
+    via the same real risk/uplift/catalog/oracle wiring `experiment
+    --policy ...` uses; `noaction`/`rules` never touch it. `agent_s1`/`agent`
+    call the real LLM (GROQ_API_KEY) through `_ChatShim` — mock
+    `magenta.llm.chat`/`chat_structured`, or pass a stub via `GraphDeps.chat`
+    directly (as the graph tests do), to run this offline.
+    """
+    def deps_factory(n_: int, seed_: int) -> GraphDeps:
+        conn = get_conn()
+        init_graph_tables(conn)
+        _, hidden = generate_population(n=n_, seed=seed_)
+        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed_)
+        try:
+            bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+        except sqlite3.OperationalError:
+            pass
+        sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+        return GraphDeps(
+            risk=_load_or_train_risk(seed_),
+            uplift=_load_or_train_uplift(seed_),
+            bandit=bandit,
+            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+            oracle=ResponseOracle(hidden, params=sim_params, seed=seed_),
+            conn=conn, params=_GraphParams(), chat=_ChatShim(),
+            load_customer=lambda cid: None,
+        )
+
+    ladder = run_ladder(n=n, seed=seed, deps_factory=deps_factory)
+
+    header = f"{'RUNG':<12}{'ATE':>10}{'CI':>22}{'WASTED':>9}{'SPEND':>12}{'€RETAINED':>13}"
+    typer.echo(typer.style(header, bold=True))
+    typer.echo("-" * len(header))
+    for rung in RUNGS:
+        s = ladder[rung]
+        ci = f"[{s.ci_low:+.4f},{s.ci_high:+.4f}]"
+        typer.echo(f"{rung:<12}{s.ate:>10.4f}{ci:>22}{s.wasted_offer_rate:>9.3f}"
+                   f"{s.offer_spend:>12.1f}{s.euros_retained:>13.1f}")
+
+    out_path = str(data_dir() / "scorecards.json")
+    write_scorecards(out_path, ladder)
+    typer.echo(typer.style(f"\nwrote {out_path}", fg="green"))
+    # honesty guard (§10 risk #2): flag if agent fails to beat rules.
+    if ladder["agent"].ate < ladder["rules"].ate:
+        typer.echo(typer.style(
+            "NOTE: agent did NOT beat rules on ATE this run — reporting honestly.",
+            fg="yellow"))
 
 
 uplift_app = typer.Typer(help="Uplift model reporting.")

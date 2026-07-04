@@ -15,6 +15,7 @@ venv/
 data/*.db
 data/*.db-*
 data/models/
+data/scorecards.json
 *.sqlite
 *.sqlite3
 
