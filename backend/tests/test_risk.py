@@ -3,6 +3,7 @@ from pathlib import Path
 from magenta.brain.features import FEATURE_NAMES
 from magenta.brain.risk import Band, RiskModel
 from magenta.brain.training import build_training_data
+import shap
 
 
 def _fitted_model():
@@ -46,3 +47,18 @@ def test_save_load_roundtrip(tmp_path):
     before = m.score(td.customers[0]).p_churn
     after = m2.score(td.customers[0]).p_churn
     assert abs(before - after) < 1e-9
+
+
+def test_explainer_cache_invalidated_on_refit():
+    """Refit after score() must not serve SHAP drivers from the OLD trees."""
+    td_a = build_training_data(n=600, seed=11)
+    td_b = build_training_data(n=600, seed=77)
+    m = RiskModel().fit(td_a.customers, td_a.churned)
+    m.score(td_a.customers[0])                      # warm cache on model A
+    m.fit(td_b.customers, td_b.churned)             # refit -> new trees
+    fresh = shap.TreeExplainer(m._raw).shap_values(
+        m._matrix([td_b.customers[0]]))
+    cached_drivers = m.score(td_b.customers[0]).drivers
+    fresh_top = sorted(range(len(m.feature_names)),
+                       key=lambda i: -abs((fresh[1] if isinstance(fresh, list) else fresh)[0][i]))[0]
+    assert cached_drivers[0].feature == m.feature_names[fresh_top]

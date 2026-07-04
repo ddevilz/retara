@@ -126,6 +126,7 @@ class RiskModel:
         # replacement for wrapping an already-fitted estimator.
         self._calibrated = CalibratedClassifierCV(FrozenEstimator(base), method="isotonic")
         self._calibrated.fit(X_cal, y_cal)
+        self._explainer = None  # invalidate cached TreeExplainer (refit => new trees)
         return self
 
     def _p_churn(self, X: np.ndarray) -> np.ndarray:
