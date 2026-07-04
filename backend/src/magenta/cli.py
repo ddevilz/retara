@@ -18,12 +18,8 @@ from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel, classify_segment
 from magenta.config import configs_dir, data_dir, load_models
 from magenta.db import get_conn
-from magenta.experiment import (
-    NoActionPolicy,
-    RulesPolicy,
-    Scorecard,
-    run_experiment,
-)
+from magenta.experiment import Scorecard, run_experiment
+from magenta.graph.ablation import RUNGS, make_policy
 from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
 from magenta.graph.tables import init_graph_tables
 from magenta.llm import chat, chat_structured
@@ -159,18 +155,44 @@ def _format_scorecard(sc: Scorecard, policy: str) -> str:
 
 @app.command()
 def experiment(
-    policy: str = typer.Option("rules", "--policy", help="rules | noaction"),
+    policy: str = typer.Option("rules", "--policy", help="|".join(RUNGS)),
     n: int = typer.Option(10000, "-n", "--n", help="population size"),
     seed: int = typer.Option(42, "--seed", help="seed (population + CRN + bootstrap)"),
     budget: float = typer.Option(None, "--budget", help="optional total offer-spend cap"),
 ) -> None:
-    """Run a single-period two-arm RCT and print the Scorecard (ATE +/- bootstrap CI)."""
-    policies = {"rules": RulesPolicy, "noaction": NoActionPolicy}
-    if policy not in policies:
-        typer.secho(f"unknown policy {policy!r}; choose from {sorted(policies)}",
+    """Run a single-period two-arm RCT and print the Scorecard (ATE +/- bootstrap CI).
+
+    `--policy` walks the ablation ladder (§7): noaction -> rules -> risk_rules
+    -> agent_s1 -> agent. The two simple rungs need no ML/graph deps; the
+    risk-gated and agent rungs build the same real GraphDeps `run-one` uses
+    (loading persisted risk/uplift artifacts, training a stand-in if missing).
+    """
+    if policy not in RUNGS:
+        typer.secho(f"unknown policy {policy!r}; choose from {RUNGS}",
                     fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2)
-    sc = run_experiment(policies[policy](), n=n, seed=seed, budget=budget)
+
+    deps = None
+    if policy in {"risk_rules", "agent_s1", "agent"}:
+        conn = get_conn()
+        init_graph_tables(conn)
+        _, hidden = generate_population(n=n, seed=seed)
+        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
+        try:
+            bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+        except sqlite3.OperationalError:
+            pass
+        sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+        deps = GraphDeps(
+            risk=_load_or_train_risk(seed),
+            uplift=_load_or_train_uplift(seed),
+            bandit=bandit,
+            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+            oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
+            conn=conn, params=_GraphParams(), chat=_ChatShim(),
+            load_customer=lambda cid: None,
+        )
+    sc = run_experiment(make_policy(policy, deps), n=n, seed=seed, budget=budget)
     typer.echo(_format_scorecard(sc, policy))
 
 
