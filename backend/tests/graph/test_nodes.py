@@ -4,6 +4,12 @@ from magenta.brain.uplift import Segment
 from magenta.graph.nodes import diagnose, sense
 from magenta.graph.state import Diagnosis
 from magenta.offers import Arm
+from magenta.brain.risk import Band, Driver
+from magenta.graph.state import RiskUpliftReport, Timing
+import magenta.graph.nodes as nodes_mod
+from magenta.graph.nodes import _OBSERVABLE_FIELDS
+from magenta.graph.state import Diagnosis
+from magenta.sim.population import Customer
 
 
 ## --- tiny deps holder used only for node unit tests -------------------------
@@ -38,7 +44,6 @@ def test_sense_engages_persuadable(customer, fakes):
 
 def test_sense_does_not_engage_sure_thing(customer, fakes, monkeypatch):
     # force classify_segment -> SURE_THING regardless of numbers
-    import magenta.graph.nodes as nodes_mod
     monkeypatch.setattr(nodes_mod, "classify_segment", lambda p, t: Segment.SURE_THING)
     deps = Deps(risk=fakes["risk"], uplift=fakes["uplift"],
                 load_customer=lambda cid: customer)
@@ -50,8 +55,6 @@ def test_diagnose_one_cheap_call(customer, fakes, spy_chat):
     deps = Deps(chat=spy_chat, load_customer=lambda cid: customer)
     state = _base_state(customer)
     # sense would have populated risk; inject it
-    from magenta.graph.state import RiskUpliftReport, Timing
-    from magenta.brain.risk import Band, Driver
     state["risk"] = RiskUpliftReport(
         p_churn=0.72, band=Band.HIGH,
         drivers=[Driver(feature="OVERAGE_EVENTS", label="Overage events",
@@ -72,8 +75,6 @@ HIDDEN_TOKENS = ["theta_churn", "theta_price", "persuadable_segment",
 def test_diagnose_prompt_has_no_hidden_leak(customer, fakes, spy_chat):
     deps = Deps(chat=spy_chat, load_customer=lambda cid: customer)
     state = _base_state(customer)
-    from magenta.graph.state import RiskUpliftReport, Timing
-    from magenta.brain.risk import Band, Driver
     state["risk"] = RiskUpliftReport(
         p_churn=0.72, band=Band.HIGH,
         drivers=[Driver(feature="OVERAGE_EVENTS", label="Overage events",
@@ -84,3 +85,17 @@ def test_diagnose_prompt_has_no_hidden_leak(customer, fakes, spy_chat):
     joined = " ".join(spy_chat.prompts).lower()
     for tok in HIDDEN_TOKENS:
         assert tok.lower() not in joined, f"hidden token leaked: {tok}"
+
+
+def test_observable_whitelist_matches_customer_model():
+    """Every whitelisted prompt field must exist on the REAL Customer model —
+    silent None-filtering would gut the diagnose LLM's grounding."""
+    for f in _OBSERVABLE_FIELDS:
+        assert f in Customer.model_fields, f"{f} not a Customer field"
+
+
+def test_diagnosis_drops_hallucinated_arms():
+    d = Diagnosis(root_cause_tags=["BILL_SHOCK"], narrative="n",
+                  eligible_offer_ids=["BILL_CREDIT", "FREE_PONY", "DATA_BOOST"],
+                  confidence=0.9)
+    assert d.eligible_offer_ids == ["BILL_CREDIT", "DATA_BOOST"]

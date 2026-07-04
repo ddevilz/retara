@@ -32,8 +32,9 @@ from magenta.offers import Arm, OfferDecision
 
 ## whitelist of L2 observable fields we are allowed to describe to the LLM.
 _OBSERVABLE_FIELDS = (
-    "tenure_months", "monthly_charges", "overage_events", "dropped_call_rate",
-    "contract_end_days", "gross_margin", "clv_estimate",
+    # MUST be real magenta.sim.population.Customer fields (drift-pinned by test).
+    "tenure_months", "monthly_charge", "overage_events_90d", "dropped_calls_30d",
+    "support_tickets_90d", "contract_end_days", "gross_margin_monthly", "clv_estimate",
 )
 
 

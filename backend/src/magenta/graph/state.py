@@ -11,11 +11,11 @@ from enum import Enum
 from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from magenta.brain.risk import Band, Driver
 from magenta.brain.uplift import Segment
-from magenta.offers import OfferDecision
+from magenta.offers import Arm, OfferDecision
 
 
 class Timing(str, Enum):
@@ -42,6 +42,14 @@ class Diagnosis(BaseModel):
     narrative: str
     eligible_offer_ids: list[str]
     confidence: float = Field(ge=0.0, le=1.0)
+
+    @field_validator("eligible_offer_ids")
+    @classmethod
+    def _only_real_arms(cls, ids: list[str]) -> list[str]:
+        # LLM output boundary: silently drop hallucinated arm names so the
+        # audit trail can distinguish "no eligible offers" (empty AFTER a
+        # non-empty raw list) from genuine ineligibility. Valid ids pass through.
+        return [i for i in ids if i in Arm._value2member_map_]
 
 
 class GuardrailVerdict(BaseModel):

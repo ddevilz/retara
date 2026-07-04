@@ -19,10 +19,11 @@ class FakeCustomer:
         self.customer_id = customer_id
         # a handful of L2 observable fields nodes/prompts may read
         self.tenure_months = obs.get("tenure_months", 14)
-        self.monthly_charges = obs.get("monthly_charges", 79.0)
-        self.overage_events = obs.get("overage_events", 2)
-        self.dropped_call_rate = obs.get("dropped_call_rate", 0.03)
-        self.gross_margin = obs.get("gross_margin", 22.0)
+        self.monthly_charge = obs.get("monthly_charge", 79.0)
+        self.overage_events_90d = obs.get("overage_events_90d", 2)
+        self.dropped_calls_30d = obs.get("dropped_calls_30d", 3)
+        self.support_tickets_90d = obs.get("support_tickets_90d", 1)
+        self.gross_margin_monthly = obs.get("gross_margin_monthly", 22.0)
         self.clv_estimate = obs.get("clv_estimate", 900.0)
         self.contract_end_days = obs.get("contract_end_days", 20)
 
