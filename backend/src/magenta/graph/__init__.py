@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from magenta.graph.build import GraphDeps
 from magenta.graph.nodes import act, diagnose, sense
+from magenta.graph.scenario import run_scenario
 from magenta.graph.state import (
     Diagnosis,
     GuardrailVerdict,
@@ -22,6 +23,7 @@ __all__ = [
     "act",
     "diagnose",
     "sense",
+    "run_scenario",
     "Diagnosis",
     "GuardrailVerdict",
     "OverallState",
