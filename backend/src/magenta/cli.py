@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import hashlib
 import time
 from collections import Counter
 
@@ -392,7 +393,7 @@ def run_one(customer_id: str,
     customers, hidden = generate_population(n=1000, seed=seed)
     by_id = {c.customer_id: c for c in customers}
     if customer_id not in by_id:
-        customer_id = customers[abs(hash(customer_id)) % len(customers)].customer_id
+        customer_id = customers[int(hashlib.sha256(customer_id.encode()).hexdigest(), 16) % len(customers)].customer_id
         typer.echo(f"(id not in seeded pop; using {customer_id})")
     customer = by_id.get(customer_id, customers[0])
 
