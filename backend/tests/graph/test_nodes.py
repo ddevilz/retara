@@ -284,3 +284,21 @@ def test_no_action_equivalence_none_vs_arm(customer, fakes):
             a["fulfillment"].get("IDEMPOTENCY_KEY") is None
     assert conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0] == 0
     assert conn.execute("SELECT count(*) FROM GUARDRAIL_CONTACTS").fetchone()[0] == 0
+
+
+def test_diagnose_prompt_lists_valid_arm_menu(customer, fakes, spy_chat):
+    """The LLM can only return valid arm ids if the prompt names them —
+    without the menu every diagnosis collapses to NO_ACTION via the validator."""
+    spy = spy_chat
+    deps = Deps(chat=spy, load_customer=lambda cid: customer)
+    state = _base_state(customer)
+    state["risk"] = RiskUpliftReport(
+        p_churn=0.72, band=Band.HIGH,
+        drivers=[Driver(feature="OVERAGE_EVENTS", label="Overage events",
+                        shap_value=0.31, direction="UP")],
+        tau_hat=0.18, segment=Segment.PERSUADABLE, engage=True, timing=Timing.ACT_NOW,
+    )
+    diagnose(state, deps)
+    joined = " ".join(spy.prompts)
+    for arm in Arm:
+        assert arm.value in joined

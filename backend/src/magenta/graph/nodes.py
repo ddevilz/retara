@@ -92,11 +92,24 @@ def should_engage(state: OverallState) -> str:
 ## --------------------------------------------------------------------------- #
 ## 2. DIAGNOSE — exactly ONE cheap LLM call over SHAP drivers + observables.
 ## --------------------------------------------------------------------------- #
+_ARM_MENU = (
+    "NO_ACTION: no contact; "
+    "ACKNOWLEDGE_AND_FIX: apologize + resolve service complaints/dropped calls; "
+    "BILL_CREDIT: one-time credit for bill shock/overage; "
+    "PLAN_DOWNSELL: cheaper better-fitting plan for price pain; "
+    "DATA_BOOST: extra data for overage pain; "
+    "DEVICE_UPGRADE: device voucher near contract end; "
+    "NETWORK_PRIORITY_FIX: priority network ticket for coverage pain; "
+    "BUNDLE_ADDON: bundle sweetener vs competitor pull/contract end"
+)
+
 _DIAGNOSE_SYSTEM = (
     "You are a telecom retention analyst. Given a customer's observable account "
     "signals and the churn model's SHAP drivers, name the root-cause tags, write a "
     "one-paragraph narrative, and list which offer types could fit. Base your answer "
-    "ONLY on the signals provided. Do not invent internal scores."
+    "ONLY on the signals provided. Do not invent internal scores. "
+    "eligible_offer_ids MUST be chosen from exactly this menu (verbatim ids): "
+    + _ARM_MENU
 )
 
 
