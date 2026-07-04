@@ -231,8 +231,7 @@ def bandit_episodes(
     um = UpliftModel().fit(td.customers, td.treated, td.retained)
     cat = OfferCatalog.load(configs_dir() / "offers.yaml")
     params = SimParams.load(configs_dir() / "sim_params.yaml")
-    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm))
-    policy = BrainPolicy(rm, um, bandit, cat)
+    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
 
     typer.echo(
         "measured convergence across episodes (bandit posterior persists "
@@ -246,7 +245,6 @@ def bandit_episodes(
     for ep in range(1, episodes + 1):
         customers, hidden = generate_population(n, seed=seed + 100 + ep)
         oracle = ResponseOracle(hidden, params, seed=seed + 200 + ep)
-        policy.reset_budget()
 
         # Batch score the whole cohort once (fast); no per-customer .score().
         p_churns = rm.p_churn_batch(customers)

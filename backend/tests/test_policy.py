@@ -43,3 +43,15 @@ def test_reset_budget_restores_capacity():
     pol.reset_budget()
     # after reset at least one offer becomes possible again for a persuadable
     assert pol._remaining == 10.0
+
+
+def test_risk_floor_constants_stay_equal():
+    """BrainPolicy._RISK_FLOOR must match classify_segment's default risk_floor —
+    the bandit-episodes CLI's inline gate equivalence depends on it."""
+    import inspect
+
+    from magenta.brain.policy import _RISK_FLOOR
+    from magenta.brain.uplift import classify_segment
+
+    default_floor = inspect.signature(classify_segment).parameters["risk_floor"].default
+    assert _RISK_FLOOR == default_floor
