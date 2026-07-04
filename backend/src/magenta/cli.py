@@ -381,6 +381,7 @@ class _GraphParams:
     freq_cap_days = 14
     freq_cap_max = 1
     value_cap = 40.0
+    p90_clv = 2000.0
 
 
 class _ChatShim:

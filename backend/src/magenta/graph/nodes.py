@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from magenta.brain.features import featurize
 from magenta.brain.uplift import Segment, classify_segment
+from magenta.graph import system2
 from magenta.graph.state import (
     Diagnosis,
     GuardrailVerdict,
@@ -154,6 +155,15 @@ def decide(state: OverallState, deps) -> dict:
     eligible = [a for a in catalog_eligible if a.value in allowed_ids]
     if not eligible:
         eligible = [Arm.NO_ACTION]
+
+    if (getattr(deps, "system2_enabled", False)
+            and system2.should_deliberate(customer, diagnosis, deps.params.p90_clv)):
+        offer = system2.deliberate(customer, state.get("risk"), diagnosis, deps)
+        payload = {"arm": offer.arm.value, "cost": offer.cost, "path": "SYSTEM2",
+                   "eligible": [a.value for a in eligible]}
+        return {"offer": offer,
+                "audit_log": [_audit("DECIDE_S2", state["customer_id"], payload)]}
+
     x = featurize(customer)
     arm, propensity = deps.bandit.select(x, eligible)
     offer = OfferDecision(

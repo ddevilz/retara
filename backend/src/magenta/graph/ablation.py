@@ -7,10 +7,11 @@ report that honestly (council amendment #1 fixes this exact 5-rung order).
 `agent_s1` and `agent` are both `AgentPolicy` — the only difference is the
 `system2_enabled` flag on `GraphDeps`, so `agent_s1` measures the full graph
 (risk/uplift/bandit/guardrail/LLM-diagnose) on its own, and `agent` measures
-System-2's marginal contribution on top of that once Task 7.6 wires
-`should_deliberate`/`deliberate` into the `decide` node. Until then `agent`
-runs the same graph as `agent_s1` with the flag simply set True (a no-op
-until 7.6 reads it).
+System-2's marginal contribution on top of that: the `decide` node (Task 7.6,
+`magenta.graph.nodes.decide`) routes to `system2.deliberate` whenever
+`system2_enabled` is True AND `system2.should_deliberate(...)` triggers
+(high CLV >= `deps.params.p90_clv` or low diagnosis confidence) — otherwise
+both rungs fall through to the identical bandit path.
 """
 from __future__ import annotations
 
