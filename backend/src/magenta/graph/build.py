@@ -47,7 +47,7 @@ class GraphDeps:
     chat: object
     load_customer: Callable[[str], object]
     checkpointer: object | None = None  # None => InMemorySaver (tests)
-    campaign_id: str = "CAMP-1"
+    campaign_id: str = "AGENT-EXP"
     system2_enabled: bool = False  # Lab 7 Task 7.6 wires System-2; "agent" rung sets True
 
 
