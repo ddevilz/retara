@@ -51,3 +51,21 @@ def test_fulfillment_is_idempotent_on_key(conn):
     assert r2["ARM"] == "BILL_CREDIT"
     n = conn.execute("SELECT count(*) FROM FULFILLMENTS WHERE IDEMPOTENCY_KEY='KEY-1'").fetchone()[0]
     assert n == 1
+
+
+def test_works_without_row_factory():
+    """Plain-tuple connections (stdlib default) must not crash the ledger."""
+    conn = sqlite3.connect(":memory:")  # NO row_factory set
+    init_graph_tables(conn)
+    row = insert_fulfillment(conn, "K-plain", "C1", "CAMP", "BILL_CREDIT", 8.0, "FULFILLED")
+    assert row["IDEMPOTENCY_KEY"] == "K-plain" and row["COST"] == 8.0
+    again = fulfillment_for(conn, "K-plain")
+    assert again == row
+
+
+def test_non_duplicate_integrity_error_raises():
+    """A NOT NULL violation must raise, not silently return None."""
+    conn = sqlite3.connect(":memory:")
+    init_graph_tables(conn)
+    with pytest.raises(sqlite3.IntegrityError):
+        insert_fulfillment(conn, "K-bad", None, "CAMP", "BILL_CREDIT", 8.0, "FULFILLED")

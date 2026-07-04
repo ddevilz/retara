@@ -57,11 +57,15 @@ def contacts_since(conn: sqlite3.Connection, customer_id: str, since_iso: str) -
 
 
 def fulfillment_for(conn: sqlite3.Connection, idempotency_key: str) -> dict | None:
-    row = conn.execute(
+    cur = conn.execute(
         "SELECT * FROM FULFILLMENTS WHERE IDEMPOTENCY_KEY = ?",
         (idempotency_key,),
-    ).fetchone()
-    return dict(row) if row is not None else None
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    # row_factory-independent: works with plain-tuple connections too.
+    return {d[0]: v for d, v in zip(cur.description, row)}
 
 
 def insert_fulfillment(conn: sqlite3.Connection, idempotency_key: str,
@@ -80,6 +84,11 @@ def insert_fulfillment(conn: sqlite3.Connection, idempotency_key: str,
         )
         conn.commit()
     except sqlite3.IntegrityError:
-        # lost the race — someone else inserted the same key; return theirs.
         conn.rollback()
+        winner = fulfillment_for(conn, idempotency_key)
+        if winner is None:
+            # Not a duplicate-key race (e.g. NOT NULL violation) — surface it loudly
+            # rather than silently breaking the -> dict contract.
+            raise
+        return winner  # lost the race — return the winning row.
     return fulfillment_for(conn, idempotency_key)
