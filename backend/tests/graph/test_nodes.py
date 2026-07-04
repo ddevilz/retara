@@ -4,7 +4,16 @@ import pytest
 
 from magenta.brain.risk import Band, Driver
 from magenta.brain.uplift import Segment
-from magenta.graph.nodes import _OBSERVABLE_FIELDS, decide, diagnose, guardrail, sense
+from magenta.graph.nodes import (
+    _OBSERVABLE_FIELDS,
+    act,
+    decide,
+    diagnose,
+    guardrail,
+    idempotency_key,
+    outcome,
+    sense,
+)
 from magenta.graph.state import Diagnosis, GuardrailVerdict, RiskUpliftReport, Timing
 from magenta.graph.tables import init_graph_tables
 from magenta.offers import Arm, OfferDecision
@@ -184,3 +193,70 @@ def _mem_conn():
     c.row_factory = sqlite3.Row
     init_graph_tables(c)
     return c
+
+
+## --------------------------------------------------------------------------- #
+## ACT — idempotent fulfillment; holdout => shadow-log only.
+## --------------------------------------------------------------------------- #
+def test_idempotency_key_stable():
+    k1 = idempotency_key("CUST-1", "CAMP-A", Arm.BILL_CREDIT)
+    k2 = idempotency_key("CUST-1", "CAMP-A", Arm.BILL_CREDIT)
+    k3 = idempotency_key("CUST-1", "CAMP-A", Arm.DATA_BOOST)
+    assert k1 == k2 and k1 != k3 and len(k1) == 64
+
+
+def test_act_fulfills_once_on_double_invoke(customer, fakes):
+    conn = _mem_conn()
+    deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"], conn=conn)
+    s = _state_with_diagnosis(customer)
+    s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
+    s["verdict"] = GuardrailVerdict(decision="PASS")
+    o1 = act(s, deps)
+    o2 = act(s, deps)   # re-run (simulates interrupt/resume)
+    n = conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0]
+    assert n == 1
+    assert o1["fulfillment"]["IDEMPOTENCY_KEY"] == o2["fulfillment"]["IDEMPOTENCY_KEY"]
+
+
+def test_act_holdout_shadow_no_row_but_audit(customer, fakes):
+    conn = _mem_conn()
+    deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"], conn=conn)
+    s = _state_with_diagnosis(customer)
+    s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
+    s["verdict"] = GuardrailVerdict(decision="PASS")
+    s["holdout"] = True
+    out = act(s, deps)
+    n = conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0]
+    assert n == 0
+    assert out["fulfillment"]["status"] == "SHADOW"
+    assert out["audit_log"][0]["NODE"] == "ACT"
+
+
+## --------------------------------------------------------------------------- #
+## OUTCOME — oracle result -> reward -> bandit.update -> audit.
+## --------------------------------------------------------------------------- #
+def test_outcome_updates_bandit_and_computes_reward(customer, fakes, monkeypatch):
+    # NOTE: brief snippet imported nodes_mod/types inside the test body but never
+    # used them to stub featurize() — FakeCustomer lacks the raw fields featurize()
+    # reads directly (total_charges, data_gb_used_p50, ...), so calling the real
+    # featurize() here would AttributeError. Stub it, same as test_decide_* does.
+    monkeypatch.setattr(nodes_mod, "featurize", lambda c: [0.0])
+    deps = Deps(load_customer=lambda cid: customer, oracle=fakes["oracle"],
+                bandit=fakes["bandit"])
+    s = _state_with_diagnosis(customer)
+    s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
+    out = outcome(s, deps)
+    # accepted=True, churned=False => retained; reward = margin(22) - cost(8) = 14
+    assert out["outcome"]["reward"] == pytest.approx(14.0)
+    assert out["outcome"]["retained"] is True
+    assert fakes["bandit"].updates == [(Arm.BILL_CREDIT, pytest.approx(14.0))]
+
+
+def test_outcome_holdout_no_bandit_update(customer, fakes):
+    deps = Deps(load_customer=lambda cid: customer, oracle=fakes["oracle"],
+                bandit=fakes["bandit"])
+    s = _state_with_diagnosis(customer)
+    s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
+    s["holdout"] = True
+    outcome(s, deps)
+    assert fakes["bandit"].updates == []   # holdout never trains the bandit

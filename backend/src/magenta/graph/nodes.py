@@ -215,3 +215,70 @@ def guardrail_route(state: OverallState) -> str:
     if v is None or v.decision == "REJECT":
         return "END"
     return "act"
+
+
+## --------------------------------------------------------------------------- #
+## 5. ACT — idempotent fulfillment; holdout ⇒ shadow-log only. (§5.5 / risk #4)
+## --------------------------------------------------------------------------- #
+def idempotency_key(customer_id: str, campaign_id: str, arm: Arm) -> str:
+    raw = f"{customer_id}:{campaign_id}:{arm.value}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def act(state: OverallState, deps) -> dict:
+    offer = state["offer"]
+    cid, camp = state["customer_id"], state["campaign_id"]
+
+    if offer is None or offer.arm is Arm.NO_ACTION:
+        return {"fulfillment": {"status": "NO_ACTION"},
+                "audit_log": [_audit("ACT", cid, {"status": "NO_ACTION"})]}
+
+    if state["holdout"]:
+        # shadow: record the counterfactual, fulfill nothing, no contact ledger.
+        shadow = {"status": "SHADOW", "arm": offer.arm.value, "cost": offer.cost,
+                  "idempotency_key": idempotency_key(cid, camp, offer.arm)}
+        return {"fulfillment": shadow,
+                "audit_log": [_audit("ACT", cid, {"status": "SHADOW",
+                                                  "arm": offer.arm.value})]}
+
+    key = idempotency_key(cid, camp, offer.arm)
+    already = fulfillment_for(deps.conn, key) is not None
+    row = insert_fulfillment(deps.conn, key, cid, camp, offer.arm.value,
+                             offer.cost, "FULFILLED")
+    if not already:
+        record_contact(deps.conn, cid, camp, _now_iso())
+    return {"fulfillment": row,
+            "audit_log": [_audit("ACT", cid,
+                                 {"status": "FULFILLED" if not already else "IDEMPOTENT_HIT",
+                                  "arm": offer.arm.value, "key": key})]}
+
+
+## --------------------------------------------------------------------------- #
+## 6. OUTCOME — oracle result → reward → bandit.update → audit. (§5.5)
+## --------------------------------------------------------------------------- #
+def outcome(state: OverallState, deps) -> dict:
+    customer = deps.load_customer(state["customer_id"])
+    offer = state["offer"]
+    holdout = state["holdout"]
+    no_action = offer is None or offer.arm is Arm.NO_ACTION
+
+    # holdout measures the counterfactual: oracle sees NO offer.
+    oracle_offer = None if (holdout or no_action) else offer
+    result = deps.oracle.outcome(customer, oracle_offer)
+    retained = not result.churned
+    # NOTE: brief snippet used getattr(customer, "gross_margin", 0.0) — that
+    # field doesn't exist on the real Customer model (magenta.sim.population),
+    # so it silently always evaluated to 0.0. The real field is
+    # gross_margin_monthly; use direct attribute access (no getattr-default)
+    # so a future rename fails loudly instead of silently defaulting.
+    margin = customer.gross_margin_monthly
+    cost = 0.0 if no_action else offer.cost
+    reward = (margin if retained else 0.0) - cost
+
+    if not holdout and not no_action:
+        deps.bandit.update(featurize(customer), offer.arm, reward)
+
+    out = {"accepted": bool(result.accepted), "churned": bool(result.churned),
+           "retained": retained, "reward": reward, "holdout": holdout}
+    return {"outcome": out,
+            "audit_log": [_audit("OUTCOME", state["customer_id"], out)]}
