@@ -14,6 +14,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
+from magenta.brain.features import featurize
 from magenta.brain.uplift import Segment, classify_segment
 from magenta.graph.state import (
     Diagnosis,
@@ -127,3 +128,90 @@ def diagnose(state: OverallState, deps) -> dict:
                "confidence": diagnosis.confidence}
     return {"diagnosis": diagnosis,
             "audit_log": [_audit("DIAGNOSE", state["customer_id"], payload)]}
+
+
+## --------------------------------------------------------------------------- #
+## 3. DECIDE — bandit pick over (catalog.eligible ∩ diagnosis.eligible_offer_ids)
+## --------------------------------------------------------------------------- #
+def decide(state: OverallState, deps) -> dict:
+    customer = deps.load_customer(state["customer_id"])
+    diagnosis = state["diagnosis"]
+    catalog_eligible = deps.catalog.eligible(customer)
+    allowed_ids = set(diagnosis.eligible_offer_ids)
+    eligible = [a for a in catalog_eligible if a.value in allowed_ids]
+    if not eligible:
+        eligible = [Arm.NO_ACTION]
+    x = featurize(customer)
+    arm, propensity = deps.bandit.select(x, eligible)
+    offer = OfferDecision(
+        arm=arm,
+        cost=deps.catalog.cost(arm),
+        rationale=diagnosis.narrative,
+        propensity=propensity,
+    )
+    payload = {"arm": arm.value, "cost": offer.cost, "propensity": propensity,
+               "eligible": [a.value for a in eligible]}
+    return {"offer": offer,
+            "audit_log": [_audit("DECIDE", state["customer_id"], payload)]}
+
+
+## --------------------------------------------------------------------------- #
+## 4. GUARDRAIL — deterministic, fails closed. No protected attrs. (§5.7)
+## --------------------------------------------------------------------------- #
+def guardrail(state: OverallState, deps) -> dict:
+    offer = state["offer"]
+    customer = deps.load_customer(state["customer_id"])
+    failed: list[str] = []
+    requires_approval = False
+
+    if offer is None or offer.arm is Arm.NO_ACTION:
+        verdict = GuardrailVerdict(decision="PASS", failed_policies=[])
+        return {"verdict": verdict,
+                "audit_log": [_audit("GUARDRAIL", state["customer_id"],
+                                     {"decision": "PASS", "reason": "NO_ACTION"})]}
+
+    # 1) consent
+    if not state["consent_flags"].get("MARKETING"):
+        failed.append("CONSENT")
+
+    # 2) frequency cap (Store/ledger)
+    since = (datetime.now(timezone.utc)
+             - timedelta(days=deps.params.freq_cap_days)).isoformat()
+    if contacts_since(deps.conn, state["customer_id"], since) >= deps.params.freq_cap_max:
+        failed.append("FREQ_CAP")
+
+    # 3) min-margin: post-offer margin must clear the arm's floor
+    # NOTE: brief snippet used getattr(customer, "gross_margin", 0.0) — that
+    # field doesn't exist on the real Customer model (magenta.sim.population),
+    # so it silently always evaluated to 0.0. The real field is
+    # gross_margin_monthly; use direct attribute access (no getattr-default)
+    # so a future rename fails loudly instead of silently defaulting.
+    margin_after = customer.gross_margin_monthly - offer.cost
+    if margin_after < deps.catalog.min_margin(offer.arm):
+        failed.append("MIN_MARGIN")
+
+    # 4) value cap -> human approval (interrupt() wired in lab 8; keep idempotent)
+    if offer.cost > deps.params.value_cap:
+        requires_approval = True
+
+    if failed:
+        decision = "REJECT"
+    elif requires_approval:
+        decision = "NEEDS_APPROVAL"
+    else:
+        decision = "PASS"
+
+    verdict = GuardrailVerdict(decision=decision, failed_policies=failed)
+    payload = {"decision": decision, "failed_policies": failed,
+               "requires_approval": requires_approval}
+    return {"verdict": verdict,
+            "requires_approval": requires_approval,
+            "audit_log": [_audit("GUARDRAIL", state["customer_id"], payload)]}
+
+
+def guardrail_route(state: OverallState) -> str:
+    """Conditional edge: 'act' on PASS/NEEDS_APPROVAL, 'END' on REJECT."""
+    v = state.get("verdict")
+    if v is None or v.decision == "REJECT":
+        return "END"
+    return "act"

@@ -1,15 +1,15 @@
+import sqlite3
+
 import pytest
 
-from magenta.brain.uplift import Segment
-from magenta.graph.nodes import diagnose, sense
-from magenta.graph.state import Diagnosis
-from magenta.offers import Arm
 from magenta.brain.risk import Band, Driver
-from magenta.graph.state import RiskUpliftReport, Timing
-import magenta.graph.nodes as nodes_mod
-from magenta.graph.nodes import _OBSERVABLE_FIELDS
-from magenta.graph.state import Diagnosis
+from magenta.brain.uplift import Segment
+from magenta.graph.nodes import _OBSERVABLE_FIELDS, decide, diagnose, guardrail, sense
+from magenta.graph.state import Diagnosis, GuardrailVerdict, RiskUpliftReport, Timing
+from magenta.graph.tables import init_graph_tables
+from magenta.offers import Arm, OfferDecision
 from magenta.sim.population import Customer
+import magenta.graph.nodes as nodes_mod
 
 
 ## --- tiny deps holder used only for node unit tests -------------------------
@@ -99,3 +99,88 @@ def test_diagnosis_drops_hallucinated_arms():
                   eligible_offer_ids=["BILL_CREDIT", "FREE_PONY", "DATA_BOOST"],
                   confidence=0.9)
     assert d.eligible_offer_ids == ["BILL_CREDIT", "DATA_BOOST"]
+
+
+class Params:
+    freq_cap_days = 14
+    freq_cap_max = 1
+    value_cap = 40.0
+    min_margin_floor = 0.0
+
+
+def _state_with_diagnosis(customer):
+    s = _base_state(customer)
+    s["risk"] = RiskUpliftReport(
+        p_churn=0.72, band=Band.HIGH,
+        drivers=[Driver(feature="OVERAGE_EVENTS", label="Overage",
+                        shap_value=0.31, direction="UP")],
+        tau_hat=0.18, segment=Segment.PERSUADABLE, engage=True, timing=Timing.ACT_NOW)
+    s["diagnosis"] = Diagnosis(
+        root_cause_tags=["BILL_SHOCK"], narrative="bill shock",
+        eligible_offer_ids=[Arm.BILL_CREDIT.value], confidence=0.8)
+    return s
+
+
+def test_decide_intersects_catalog_and_diagnosis(customer, fakes, monkeypatch):
+    monkeypatch.setattr(nodes_mod, "featurize", lambda c: [0.0])
+    deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"],
+                bandit=fakes["bandit"])
+    out = decide(_state_with_diagnosis(customer), deps)
+    assert isinstance(out["offer"], OfferDecision)
+    assert out["offer"].arm is Arm.BILL_CREDIT      # only common arm
+    assert out["audit_log"][0]["NODE"] == "DECIDE"
+
+
+def test_guardrail_passes_clean(customer, fakes):
+    deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"],
+                conn=_mem_conn(), params=Params())
+    s = _state_with_diagnosis(customer)
+    s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
+    out = guardrail(s, deps)
+    assert out["verdict"].decision == "PASS"
+
+
+def test_guardrail_rejects_on_margin(customer, fakes):
+    cat = fakes["catalog"]; cat._min_margin = 5.0
+    # margin 22 - cost 20 = 2 < 5 => reject
+    deps = Deps(load_customer=lambda cid: customer, catalog=cat,
+                conn=_mem_conn(), params=Params())
+    s = _state_with_diagnosis(customer)
+    s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=20.0, propensity=0.6)
+    out = guardrail(s, deps)
+    assert out["verdict"].decision == "REJECT"
+    assert "MIN_MARGIN" in out["verdict"].failed_policies
+
+
+def test_guardrail_rejects_on_consent(customer, fakes):
+    deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"],
+                conn=_mem_conn(), params=Params())
+    s = _state_with_diagnosis(customer)
+    s["consent_flags"] = {"MARKETING": False}
+    s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
+    out = guardrail(s, deps)
+    assert out["verdict"].decision == "REJECT"
+    assert "CONSENT" in out["verdict"].failed_policies
+
+
+def test_guardrail_value_cap_needs_approval(customer, fakes):
+    deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"],
+                conn=_mem_conn(), params=Params())
+    s = _state_with_diagnosis(customer)
+    s["offer"] = OfferDecision(arm=Arm.DEVICE_UPGRADE, cost=50.0, propensity=0.6)
+    # cost 50 > value_cap 40 => NEEDS_APPROVAL (but margin: 22-50 <0 also fails)
+    # so give a big-margin customer:
+    # NOTE: brief snippet set customer.gross_margin (not a real Customer field,
+    # would be a silent no-op combined with the getattr(..., "gross_margin", 0.0)
+    # bug in guardrail()). The real field is gross_margin_monthly.
+    customer.gross_margin_monthly = 100.0
+    out = guardrail(s, deps)
+    assert out["verdict"].decision == "NEEDS_APPROVAL"
+    assert out["requires_approval"] is True
+
+
+def _mem_conn():
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    init_graph_tables(c)
+    return c
