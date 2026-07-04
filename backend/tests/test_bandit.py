@@ -1,6 +1,7 @@
 import sqlite3
 
 import numpy as np
+import pytest
 
 from magenta.brain.bandit import ThompsonBandit
 from magenta.offers import Arm
@@ -30,6 +31,25 @@ def test_converges_on_two_arm_problem():
     last = picks[-100:]
     share = sum(a == Arm.BILL_CREDIT for a in last) / len(last)
     assert share > 0.7, f"best-arm share {share} too low"
+
+
+def test_posterior_mean_matches_theta_mean_and_is_deterministic():
+    # System-2's lookahead (magenta.graph.system2.deliberate) needs a
+    # deterministic (non-sampled) posterior estimate to score candidate arms
+    # reproducibly within one deliberation call — ThompsonBandit.select()'s
+    # stochastic draw is unsuitable for that. posterior_mean must equal
+    # x . theta_mean and must NOT vary across repeated calls.
+    arms = [Arm.BILL_CREDIT, Arm.DATA_BOOST]
+    b = ThompsonBandit(dim=3, arms=arms, seed=0)
+    x = np.array([1.0, 2.0, 3.0])
+    b.update(x, Arm.BILL_CREDIT, 5.0)
+
+    expected = float(x @ b._theta_mean(Arm.BILL_CREDIT))
+    first = b.posterior_mean(x, Arm.BILL_CREDIT)
+    second = b.posterior_mean(x, Arm.BILL_CREDIT)
+
+    assert first == pytest.approx(expected)
+    assert first == second  # deterministic, unlike select()'s TS draw
 
 
 def test_save_load_roundtrip():

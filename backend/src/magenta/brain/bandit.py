@@ -36,6 +36,16 @@ class ThompsonBandit:
     def _theta_mean(self, arm: Arm) -> np.ndarray:
         return np.linalg.solve(self._A[arm], self._b[arm])
 
+    def posterior_mean(self, x: np.ndarray, arm: Arm) -> float:
+        """Expected reward x . theta_mean_a — the deterministic (non-sampled)
+        posterior-mean estimate for one arm. Used by System-2's lookahead
+        (magenta.graph.system2.deliberate), which must score candidates
+        WITHOUT a stochastic Thompson draw so its argmax is reproducible
+        within a single deliberation call.
+        """
+        x = np.asarray(x, dtype=np.float64).reshape(-1)
+        return float(x @ self._theta_mean(arm))
+
     def _sample_theta(self, arm: Arm) -> np.ndarray:
         A_inv = np.linalg.inv(self._A[arm])
         mean = A_inv @ self._b[arm]
