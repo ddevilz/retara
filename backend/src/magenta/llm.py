@@ -13,7 +13,7 @@ from functools import lru_cache
 
 import openai
 from langsmith.wrappers import wrap_openai
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from magenta.config import load_models
 
@@ -76,5 +76,22 @@ def chat_structured(
             model=_model_for(role), messages=[schema_hint, *messages],
             response_format={"type": "json_object"},
         )
-        return model_cls.model_validate_json(
-            resp.choices[0].message.content or "{}")
+        raw = resp.choices[0].message.content or "{}"
+        try:
+            return model_cls.model_validate_json(raw)
+        except ValidationError as exc:
+            # One self-repair retry: feed the validation error back. A single
+            # malformed reply must never kill a cohort run (a missing
+            # eligible_offer_ids crashed a live 5-rung ablation).
+            repair = {
+                "role": "system",
+                "content": ("Your previous JSON failed validation: "
+                            f"{exc.errors(include_url=False)}. Reply ONLY with a "
+                            "corrected JSON object matching the schema."),
+            }
+            resp = client.chat.completions.create(
+                model=_model_for(role), messages=[schema_hint, *messages, repair],
+                response_format={"type": "json_object"},
+            )
+            return model_cls.model_validate_json(
+                resp.choices[0].message.content or "{}")

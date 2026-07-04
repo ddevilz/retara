@@ -136,7 +136,12 @@ def diagnose(state: OverallState, deps) -> dict:
         {"role": "system", "content": _DIAGNOSE_SYSTEM},
         {"role": "user", "content": _diagnose_user_prompt(report, observables)},
     ]
-    diagnosis: Diagnosis = deps.chat.chat_structured("cheap", messages, Diagnosis)
+    try:
+        diagnosis: Diagnosis = deps.chat.chat_structured("cheap", messages, Diagnosis)
+    except Exception as exc:  # degraded diagnosis: empty arm set -> NO_ACTION path
+        diagnosis = Diagnosis(root_cause_tags=["DIAGNOSIS_FAILED"],
+                              narrative=f"LLM diagnosis failed: {type(exc).__name__}",
+                              eligible_offer_ids=[], confidence=0.0)
     payload = {"root_cause_tags": diagnosis.root_cause_tags,
                "eligible_offer_ids": diagnosis.eligible_offer_ids,
                "confidence": diagnosis.confidence}
