@@ -16,6 +16,8 @@ from magenta.brain.policy import BrainPolicy
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel, classify_segment
+from magenta.chat.persona import Archetype, PersonaAgent, make_persona
+from magenta.chat.runner import run_negotiation
 from magenta.config import configs_dir, data_dir, load_models
 from magenta.db import get_conn
 from magenta.experiment import Scorecard, run_experiment
@@ -508,6 +510,66 @@ def run_one(customer_id: str,
     persist_audit(conn, final.get("audit_log", []))
     deps.bandit.save(conn)
     _pretty(final)
+
+
+## ---- appended by lab 8 task 8.7: negotiation-runner chat subcommand ----
+
+_ARCHETYPE_BY_FLAG = {
+    "bill_shock": Archetype.BILL_SHOCK,
+    "confused": Archetype.CONFUSED,
+    "price_haggler": Archetype.PRICE_HAGGLER,
+    "network_complainer": Archetype.NETWORK_COMPLAINER,
+    "competitor_bluffer": Archetype.COMPETITOR_BLUFFER,
+    "sleeping_dog": Archetype.SLEEPING_DOG,
+}
+
+
+@app.command()
+def chat(
+    persona: str | None = typer.Option(None, help="One of: " + ", ".join(_ARCHETYPE_BY_FLAG)),
+    seed: int = typer.Option(0, help="Population seed"),
+    human: bool = typer.Option(False, "--human", help="Interactive stdin mode"),
+    customer: str | None = typer.Option(None, help="Customer id for --human mode"),
+) -> None:
+    """Run one negotiation: a scripted persona (--persona ARCHETYPE) against
+    the retention agent, or a live human (--human [--customer ID]) via stdin.
+    """
+    customers, hidden = generate_population(64, seed=seed)
+    by_id = {c.customer_id: c for c in customers}
+    target = by_id.get(customer, customers[0]) if human else customers[0]
+
+    conn = get_conn()
+    init_graph_tables(conn)
+    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
+    try:
+        bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+    except sqlite3.OperationalError:
+        pass
+    sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+    deps = GraphDeps(
+        risk=_load_or_train_risk(seed),
+        uplift=_load_or_train_uplift(seed),
+        bandit=bandit,
+        catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+        oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
+        conn=conn, params=_GraphParams(), chat=_ChatShim(),
+        load_customer=lambda cid: by_id.get(cid, target),
+        campaign_id="CHAT",
+    )
+
+    if human:
+        result = run_negotiation(deps, target, persona=None)
+    else:
+        arche = _ARCHETYPE_BY_FLAG.get(persona)
+        if arche is None:
+            raise typer.BadParameter(f"unknown persona '{persona}'")
+        agent = PersonaAgent(make_persona(arche, target, hidden.get(target.customer_id)))
+        result = run_negotiation(deps, target, persona=agent)
+
+    typer.echo(f"\nstatus={result.status.value} turns={result.turns_used} "
+               f"offer={result.offer_final.arm.value if result.offer_final else 'none'}")
+    for t in result.transcript:
+        typer.echo(f"  {t.speaker}: {t.text}")
 
 
 if __name__ == "__main__":
