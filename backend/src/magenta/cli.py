@@ -527,8 +527,8 @@ _ARCHETYPE_BY_FLAG = {
 }
 
 
-@app.command()
-def chat(
+@app.command("chat")
+def chat_cmd(
     persona: str | None = typer.Option(None, help="One of: " + ", ".join(_ARCHETYPE_BY_FLAG)),
     seed: int = typer.Option(0, help="Population seed"),
     human: bool = typer.Option(False, "--human", help="Interactive stdin mode"),

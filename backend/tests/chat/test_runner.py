@@ -78,3 +78,13 @@ def test_sleeping_dog_not_forced_an_offer():
         result = run_negotiation(_deps(), c, persona, max_turns=6)
     assert result.status in (ChatStatus.REJECTED, ChatStatus.HANDOFF)
     assert result.offer_final is None
+
+
+def test_chat_shim_binds_llm_chat_not_cli_command():
+    """Regression: the `magenta chat` CLI command once shadowed magenta.llm.chat
+    at module level, so _ChatShim routed LLM calls into the typer command and
+    crashed live cohort runs (string seed into generate_population)."""
+    import magenta.cli as cli_mod
+    import magenta.llm as llm_mod
+
+    assert cli_mod.chat is llm_mod.chat, "llm.chat is shadowed in magenta.cli"
