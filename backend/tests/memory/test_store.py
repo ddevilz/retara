@@ -37,3 +37,14 @@ def test_semantic_recall_ranks_relevant_first():
     m.add_edge("C1", "customer", "ASKED_ABOUT", "international roaming rates", "2026-03-05")
     top = m.semantic_recall("C1", "signal keeps dropping", k=1)
     assert top[0].object.startswith("network coverage")
+
+
+def test_consolidate_closes_prior_conflicting_edge():
+    m = _mem()
+    m.consolidate("C1", "customer", "PLAN_IS", "mobile_s", "2026-01-01")
+    m.consolidate("C1", "customer", "PLAN_IS", "mobile_l", "2026-05-01")  # upgrade supersedes
+    tl = m.timeline("C1")
+    old = [e for e in tl if e.object == "mobile_s"][0]
+    new = [e for e in tl if e.object == "mobile_l"][0]
+    assert old.valid_to == "2026-05-01"  # closed by recency
+    assert new.valid_to is None  # current

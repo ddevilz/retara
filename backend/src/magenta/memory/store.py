@@ -72,3 +72,12 @@ class CustomerMemory:
         scored.sort(key=lambda t: t[0], reverse=True)
         return [MemoryEdge(subject=r["SUBJECT"], relation=r["RELATION"], object=r["OBJECT"],
                            valid_from=r["VALID_FROM"], valid_to=r["VALID_TO"]) for _, r in scored[:k]]
+
+    def consolidate(self, customer_id, subject, relation, obj, valid_from) -> None:
+        # deterministic recency: close any open edge with the same (subject, relation).
+        # No LLM (spec §5.9 / arXiv 2606.01435) -- conflict resolution is a plain
+        # SQL update, not a generation call.
+        self.conn.execute(
+            "UPDATE MEMORY_EDGES SET VALID_TO=? WHERE CUSTOMER_ID=? AND SUBJECT=? AND RELATION=? AND VALID_TO IS NULL",
+            (valid_from, customer_id, subject, relation))
+        self.add_edge(customer_id, subject, relation, obj, valid_from, valid_to=None)
