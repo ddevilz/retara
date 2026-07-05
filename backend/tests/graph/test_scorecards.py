@@ -75,6 +75,7 @@ def test_ladder_ordering_agent_ge_rules_small_n():
             freq_cap_days = 14
             freq_cap_max = 1
             value_cap = 40.0
+            p90_clv = 2000.0
 
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
         return GraphDeps(
