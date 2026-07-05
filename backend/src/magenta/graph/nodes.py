@@ -114,13 +114,27 @@ _DIAGNOSE_SYSTEM = (
 )
 
 
-def _diagnose_user_prompt(report: RiskUpliftReport, observables: dict) -> str:
+def _format_history(history: list) -> str:
+    """Render a memory timeline slice as a plain-text 'Prior history:' block.
+    Edges only ever carry OBSERVABLE content written by this module (offers
+    given, outcomes) -- never L1 hidden simulator state (anti-circularity)."""
+    if not history:
+        return ""
+    lines = [
+        f"[{e.valid_from}->{e.valid_to or 'now'}] {e.subject} {e.relation} {e.object}"
+        for e in history
+    ]
+    return "Prior history:\n" + "\n".join(lines) + "\n\n"
+
+
+def _diagnose_user_prompt(report: RiskUpliftReport, observables: dict, history_text: str = "") -> str:
     drivers = "; ".join(
         f"{d.label} (shap={d.shap_value:+.2f}, dir={d.direction})"
         for d in report.drivers
     )
     obs = "; ".join(f"{k}={v}" for k, v in observables.items() if v is not None)
     return (
+        history_text +
         f"Churn probability band: {report.band.value}.\n"
         f"Top SHAP drivers: {drivers}.\n"
         f"Observable account signals: {obs}.\n"
@@ -135,9 +149,13 @@ def diagnose(state: OverallState, deps) -> dict:
     customer = deps.load_customer(state["customer_id"])
     report = state["risk"]
     observables = _observables(customer)
+    memory = getattr(deps, "memory", None)
+    history_text = ""
+    if memory is not None:
+        history_text = _format_history(memory.timeline(state["customer_id"])[-5:])
     messages = [
         {"role": "system", "content": _DIAGNOSE_SYSTEM},
-        {"role": "user", "content": _diagnose_user_prompt(report, observables)},
+        {"role": "user", "content": _diagnose_user_prompt(report, observables, history_text)},
     ]
     try:
         diagnosis: Diagnosis = deps.chat.chat_structured("cheap", messages, Diagnosis)
@@ -336,6 +354,19 @@ def outcome(state: OverallState, deps) -> dict:
 
     if not holdout and not no_action:
         deps.bandit.update(featurize(customer), offer.arm, reward)
+
+    memory = getattr(deps, "memory", None)
+    if memory is not None:
+        cid, ts = state["customer_id"], _now_iso()
+        if holdout:
+            # counterfactual shadow run: no offer was actually given, so never
+            # write a GAVE edge, and tag the outcome distinctly from a real
+            # retained/churned result (no fulfillment-implying content).
+            memory.add_edge(cid, "customer", "OUTCOME", "holdout_shadow", ts)
+        else:
+            if not no_action:
+                memory.consolidate(cid, "agent", "GAVE", offer.arm.value, ts)
+            memory.add_edge(cid, "customer", "OUTCOME", "retained" if retained else "churned", ts)
 
     out = {"accepted": bool(result.accepted), "churned": bool(result.churned),
            "retained": retained, "reward": reward, "holdout": holdout}

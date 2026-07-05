@@ -33,6 +33,7 @@ from langgraph.graph import END, START, StateGraph
 from magenta.config import data_dir
 from magenta.graph import nodes as N
 from magenta.graph.state import OverallState
+from magenta.memory.store import CustomerMemory
 
 
 @dataclass
@@ -49,6 +50,7 @@ class GraphDeps:
     checkpointer: object | None = None  # None => InMemorySaver (tests)
     campaign_id: str = "AGENT-EXP"
     system2_enabled: bool = False  # Lab 7 Task 7.6 wires System-2; "agent" rung sets True
+    memory: CustomerMemory | None = None  # Lab 12: temporal customer memory (optional)
 
 
 def build_graph(deps: GraphDeps):

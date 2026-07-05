@@ -9,8 +9,33 @@ fetch, not per-test network I/O -- the model is cached under
 """
 from __future__ import annotations
 
+import os
+
+# CRASH WORKAROUND (verified on this machine, macOS/Apple Silicon): when a
+# process that already imported lightgbm (magenta.brain.risk/uplift, and
+# transitively the whole tests/conftest.py -> magenta.graph.build chain)
+# later runs a torch forward pass (SentenceTransformer.encode ->
+# torch.nn.functional.layer_norm), the two libraries' OpenMP thread pools
+# collide and SIGSEGV inside the native layer_norm kernel -- reproduced with
+# a minimal `import lightgbm; LocalEmbedder().encode(...)` script. Pinning
+# OMP_NUM_THREADS=1 before torch initializes its own thread pool avoids the
+# collision; must be set before `sentence_transformers`/torch import below.
+# Negligible cost here: MiniLM-L6 CPU inference on a handful of short
+# sentences at a time (never a large batch).
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import numpy as np
+import tqdm
 from sentence_transformers import SentenceTransformer
+
+# Workaround for a known tqdm/torch interpreter-shutdown segfault: tqdm's
+# background monitor thread (one per progress bar) can outlive the process
+# that spawned it when several SentenceTransformer instances are created in
+# one run (e.g. multiple tests, or CLI `memory show` + `memory eval` in the
+# same process). Setting monitor_interval=0 disables that thread entirely --
+# a documented tqdm mitigation, harmless here since nothing depends on the
+# monitor's stalled-iterator warnings.
+tqdm.tqdm.monitor_interval = 0
 
 
 class LocalEmbedder:

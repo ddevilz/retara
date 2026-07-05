@@ -30,6 +30,8 @@ from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scoreca
 from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
 from magenta.graph.tables import init_graph_tables
 from magenta.llm import chat, chat_structured
+from magenta.memory.embed import LocalEmbedder
+from magenta.memory.store import CustomerMemory
 from magenta.offers import Arm, OfferCatalog, OfferDecision
 from magenta.sim.oracle import ResponseOracle, SimParams
 from magenta.sim.population import Segment, generate_population
@@ -657,6 +659,30 @@ def eval_report(
     if golden_failed or hard_failed:
         raise typer.Exit(code=1)
     typer.echo("\nAll hard checks passed.")
+
+
+## ---- appended by lab 12 task 12.5: temporal customer memory CLI ----------
+
+
+@app.command("memory")
+def memory_cmd(action: str, customer_id: str = typer.Argument(None)):
+    """show <customer_id> -- print a customer's ordered memory timeline.
+
+    (Task 12.6 adds the `eval` action once magenta.memory.eval exists.)
+    """
+    m = CustomerMemory(get_conn(), embedder=LocalEmbedder())
+    m.init_tables()
+    if action == "show":
+        if customer_id is None:
+            typer.secho("usage: magenta memory show <customer_id>", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
+        for e in m.timeline(customer_id):
+            span = f"{e.valid_from}->{e.valid_to or 'now'}"
+            typer.echo(f"[{span}] {e.subject} {e.relation} {e.object}")
+    else:
+        typer.secho(f"unknown memory action {action!r}; choose from: show",
+                    fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
 
 
 if __name__ == "__main__":
