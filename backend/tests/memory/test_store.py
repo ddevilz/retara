@@ -1,0 +1,27 @@
+import sqlite3
+
+from magenta.memory.store import CustomerMemory
+
+
+def _mem():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    m = CustomerMemory(conn)
+    m.init_tables()
+    return m
+
+
+def test_add_and_timeline_ordered():
+    m = _mem()
+    m.add_edge("C1", "customer", "COMPLAINED_ABOUT", "coverage", "2026-03-01")
+    m.add_edge("C1", "agent", "GAVE", "bill_credit", "2026-04-01")
+    tl = m.timeline("C1")
+    assert [e.valid_from for e in tl] == ["2026-03-01", "2026-04-01"]  # temporal order
+    assert tl[1].object == "bill_credit"
+
+
+def test_timeline_is_per_customer():
+    m = _mem()
+    m.add_edge("C1", "a", "R", "x", "2026-01-01")
+    m.add_edge("C2", "a", "R", "y", "2026-01-01")
+    assert len(m.timeline("C1")) == 1
