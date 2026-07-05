@@ -16,6 +16,7 @@ data/*.db
 data/*.db-*
 data/models/
 data/scorecards.json
+data/telco_real.csv
 *.sqlite
 *.sqlite3
 

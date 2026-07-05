@@ -13,6 +13,7 @@ import uvicorn
 
 from magenta.brain.bandit import ThompsonBandit
 from magenta.brain.features import FEATURE_NAMES, featurize
+from magenta.brain.parity import main as parity_main
 from magenta.brain.policy import BrainPolicy
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
@@ -100,6 +101,19 @@ def risk_score(
     for d in a.drivers:
         arrow = "^" if d.direction == "UP" else "v"
         typer.echo(f"  {arrow} {d.label:<28} shap={d.shap_value:+.4f}")
+
+
+@app.command("parity")
+def parity() -> None:
+    """Real-data parity check: IBM Telco CSV vs simulator, same pipeline.
+
+    Downloads data/telco_real.csv once (skipped if present), trains the same
+    LightGBM+isotonic pipeline as `magenta risk train` on it, and prints its
+    AUC/Brier/ECE next to a fresh in-memory sim evaluation. Writes
+    data/parity_report.txt. See backend/scripts/real_data_parity.py /
+    magenta.brain.parity for the implementation.
+    """
+    parity_main()
 
 
 @sim_app.command("generate")

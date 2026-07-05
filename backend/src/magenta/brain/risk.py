@@ -23,6 +23,21 @@ from magenta.sim.population import Customer
 
 _DEFAULT_PATH = data_dir() / "models" / "risk.joblib"
 
+# LightGBM hyperparams for the risk-model base learner. Exposed as a module
+# constant (rather than inlined in fit()) so other callers that need to
+# mirror this EXACT pipeline shape -- e.g. scripts/real_data_parity.py's
+# real-vs-sim difficulty comparison -- import the real values instead of
+# duplicating literals that could silently drift out of sync.
+RISK_LGBM_PARAMS: dict = {
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "num_leaves": 31,
+    "subsample": 0.9,
+    "colsample_bytree": 0.9,
+    "random_state": 0,
+    "verbose": -1,
+}
+
 # Human-readable labels for driver narration (LLM narrates these, never re-derives).
 _FEATURE_LABELS: dict[str, str] = {
     "TENURE_MONTHS": "tenure (months)",
@@ -110,15 +125,7 @@ class RiskModel:
         X_tr, X_cal, y_tr, y_cal = train_test_split(
             X, y, test_size=0.3, random_state=0, stratify=y
         )
-        base = LGBMClassifier(
-            n_estimators=300,
-            learning_rate=0.05,
-            num_leaves=31,
-            subsample=0.9,
-            colsample_bytree=0.9,
-            random_state=0,
-            verbose=-1,
-        )
+        base = LGBMClassifier(**RISK_LGBM_PARAMS)
         base.fit(X_tr, y_tr)
         self._raw = base
         # Isotonic calibration on the held-out split. `cv="prefit"` was removed
