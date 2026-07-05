@@ -124,7 +124,10 @@ def _diagnose_user_prompt(report: RiskUpliftReport, observables: dict) -> str:
         f"Churn probability band: {report.band.value}.\n"
         f"Top SHAP drivers: {drivers}.\n"
         f"Observable account signals: {obs}.\n"
-        "Return root_cause_tags, narrative, eligible_offer_ids, confidence."
+        "Return root_cause_tags, narrative, eligible_offer_ids, confidence. "
+        "root_cause_tags MUST be chosen from exactly: OVERAGE, DROPPED_CALLS, "
+        "BILL_SHOCK, COMPETITOR_OFFER, CONTRACT_EXPIRY, SERVICE_COMPLAINT "
+        "(the offer catalog matches on these verbatim ids)."
     )
 
 

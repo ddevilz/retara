@@ -83,11 +83,13 @@ class RetentionChat:
         self._current_offer: OfferDecision | None = None
         self._awaiting_confirm = False
 
-    def _wording(self, act: DialogueAct, user_text: str) -> str:
+    def _wording(self, act_kind: DialogueAct, user_text: str) -> str:
+        # param renamed from `act`: shadowed the imported graph `act` node
+        # (same naming family as the cli chat-shadow bug).
         system = _customer_360(self.customer, self.report, self.diagnosis, self._current_offer)
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": f"Dialogue act: {act.value}. Customer said: {user_text}"},
+            {"role": "user", "content": f"Dialogue act: {act_kind.value}. Customer said: {user_text}"},
         ]
         return chat(role="large", messages=messages)
 
@@ -103,10 +105,11 @@ class RetentionChat:
         # explicit-yes confirmation gate (safety: irreversible act only after CONFIRM_ACT + yes)
         if self._awaiting_confirm:
             if any(w in user_text.lower() for w in _ACCEPT_WORDS):
-                _fulfill_via_act_node(self.deps, self.customer, self._current_offer)
+                accepted_offer = self._current_offer
+                _fulfill_via_act_node(self.deps, self.customer, accepted_offer)
                 self.state.status = ChatStatus.ACCEPTED
                 text = "Done — I've applied that to your account. Thank you for staying with us."
-                return self._emit(text, DialogueAct.CONFIRM_ACT)
+                return self._emit(text, DialogueAct.CONFIRM_ACT, accepted_offer)
             self._awaiting_confirm = False  # they backed out; keep negotiating
 
         act_kind = next_act(self.state, perc)
@@ -128,7 +131,16 @@ class RetentionChat:
             # `not just_opened`.
             just_opened = False
             if self._current_offer is None:
-                self._current_offer = self.ladder.open()
+                try:
+                    self._current_offer = self.ladder.open()
+                except ValueError:
+                    # No catalog rung fits the diagnosed causes (e.g. free-form
+                    # LLM tags outside the canonical vocab, or genuinely no
+                    # fitting offer): escalate gracefully, never crash live chat.
+                    self.state.status = ChatStatus.ESCALATED
+                    return self._emit(
+                        "I want to get this right — let me hand you to a "
+                        "specialist with more options.", act_kind)
                 just_opened = True
 
             if accepted:
