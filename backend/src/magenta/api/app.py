@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from magenta.api.routes_data import router as data_router
+from magenta.api.routes_stream import router as stream_router
 from magenta.api.schemas import Health
 
 ALLOWED_ORIGINS = [
@@ -29,10 +30,9 @@ def create_app() -> FastAPI:
         return Health()
 
     app.include_router(data_router)
+    app.include_router(stream_router)
 
     # Routers land here incrementally as each is built:
-    #   Task 10.3: from magenta.api.routes_stream import router as stream_router
-    #              app.include_router(stream_router)
     #   Task 10.4: from magenta.api.routes_chat import router as chat_router
     #              app.include_router(chat_router)
 
