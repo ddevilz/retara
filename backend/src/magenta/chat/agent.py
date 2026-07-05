@@ -78,7 +78,8 @@ class RetentionChat:
         self.customer = customer
         self.report = report
         self.diagnosis = diagnosis
-        self.state = DialogueState(customer_id=customer.customer_id)
+        self.state = DialogueState(customer_id=customer.customer_id,
+                                   authority_cap=authority_cap)
         self.ladder = OfferLadder(deps.catalog, diagnosis, authority_cap_eur=authority_cap)
         self._current_offer: OfferDecision | None = None
         self._awaiting_confirm = False

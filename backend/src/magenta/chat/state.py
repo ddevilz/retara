@@ -29,5 +29,6 @@ class DialogueState(BaseModel):
     commitments: list[str] = Field(default_factory=list)
     understanding_confidence: float = 0.0
     ladder_position: int = 0
+    authority_cap: float | None = None
     concessions_made: list[Arm] = Field(default_factory=list)
     status: ChatStatus = ChatStatus.ACTIVE
