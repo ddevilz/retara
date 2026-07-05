@@ -147,7 +147,8 @@ def diagnose(state: OverallState, deps) -> dict:
                               eligible_offer_ids=[], confidence=0.0)
     payload = {"root_cause_tags": diagnosis.root_cause_tags,
                "eligible_offer_ids": diagnosis.eligible_offer_ids,
-               "confidence": diagnosis.confidence}
+               "confidence": diagnosis.confidence,
+               "rationale": diagnosis.narrative}
     return {"diagnosis": diagnosis,
             "audit_log": [_audit("DIAGNOSE", state["customer_id"], payload)]}
 
@@ -168,7 +169,8 @@ def decide(state: OverallState, deps) -> dict:
             and system2.should_deliberate(customer, diagnosis, deps.params.p90_clv)):
         offer = system2.deliberate(customer, state.get("risk"), diagnosis, deps)
         payload = {"arm": offer.arm.value, "cost": offer.cost, "path": "SYSTEM2",
-                   "eligible": [a.value for a in eligible]}
+                   "eligible": [a.value for a in eligible],
+                   "rationale": offer.rationale}
         return {"offer": offer,
                 "audit_log": [_audit("DECIDE_S2", state["customer_id"], payload)]}
 
@@ -181,7 +183,8 @@ def decide(state: OverallState, deps) -> dict:
         propensity=propensity,
     )
     payload = {"arm": arm.value, "cost": offer.cost, "propensity": propensity,
-               "eligible": [a.value for a in eligible]}
+               "eligible": [a.value for a in eligible],
+               "rationale": offer.rationale}
     return {"offer": offer,
             "audit_log": [_audit("DECIDE", state["customer_id"], payload)]}
 
