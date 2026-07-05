@@ -9,6 +9,7 @@ from collections import Counter
 
 import numpy as np
 import typer
+import uvicorn
 
 from magenta.brain.bandit import ThompsonBandit
 from magenta.brain.features import FEATURE_NAMES, featurize
@@ -136,6 +137,29 @@ def smoke() -> None:
     typer.echo(f"model:   {model}")
     typer.echo(f"reply:   {reply}")
     typer.echo(f"latency: {latency_ms:.0f} ms")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", help="bind host"),
+    port: int = typer.Option(8000, help="bind port"),
+    reload: bool = typer.Option(False, help="autoreload on source change (dev only)"),
+) -> None:
+    """Run the FastAPI + SSE server (local-first demo backend).
+
+    Uses an import-string target ("magenta.api.app:app") rather than a direct
+    module import, so `magenta.api.app` (and its FastAPI/CORS setup) is only
+    constructed when `serve` actually runs and uvicorn's reloader can re-import
+    it in a worker subprocess -- every other CLI command stays free of the
+    FastAPI app-construction cost.
+    """
+    uvicorn.run(
+        "magenta.api.app:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info",
+    )
 
 
 def _format_scorecard(sc: Scorecard, policy: str) -> str:
