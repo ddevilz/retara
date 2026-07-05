@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 
+import numpy as np
 from pydantic import BaseModel
 
 
@@ -57,3 +58,17 @@ class CustomerMemory:
             "WHERE CUSTOMER_ID=? ORDER BY VALID_FROM ASC, ID ASC", (customer_id,)).fetchall()
         return [MemoryEdge(subject=r["SUBJECT"], relation=r["RELATION"], object=r["OBJECT"],
                            valid_from=r["VALID_FROM"], valid_to=r["VALID_TO"]) for r in rows]
+
+    def semantic_recall(self, customer_id, query, k: int = 3) -> list[MemoryEdge]:
+        assert self.embedder is not None, "semantic_recall needs an embedder"
+        q = self.embedder.encode([query])[0]
+        rows = self.conn.execute(
+            "SELECT SUBJECT,RELATION,OBJECT,VALID_FROM,VALID_TO,EMBEDDING FROM MEMORY_EDGES "
+            "WHERE CUSTOMER_ID=? AND EMBEDDING IS NOT NULL", (customer_id,)).fetchall()
+        scored = []
+        for r in rows:
+            v = np.frombuffer(r["EMBEDDING"], dtype=np.float32)
+            scored.append((float(np.dot(q, v)), r))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [MemoryEdge(subject=r["SUBJECT"], relation=r["RELATION"], object=r["OBJECT"],
+                           valid_from=r["VALID_FROM"], valid_to=r["VALID_TO"]) for _, r in scored[:k]]

@@ -1,5 +1,6 @@
 import sqlite3
 
+from magenta.memory.embed import LocalEmbedder
 from magenta.memory.store import CustomerMemory
 
 
@@ -25,3 +26,14 @@ def test_timeline_is_per_customer():
     m.add_edge("C1", "a", "R", "x", "2026-01-01")
     m.add_edge("C2", "a", "R", "y", "2026-01-01")
     assert len(m.timeline("C1")) == 1
+
+
+def test_semantic_recall_ranks_relevant_first():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    m = CustomerMemory(conn, embedder=LocalEmbedder())
+    m.init_tables()
+    m.add_edge("C1", "customer", "COMPLAINED_ABOUT", "network coverage dropped calls", "2026-03-01")
+    m.add_edge("C1", "customer", "ASKED_ABOUT", "international roaming rates", "2026-03-05")
+    top = m.semantic_recall("C1", "signal keeps dropping", k=1)
+    assert top[0].object.startswith("network coverage")
