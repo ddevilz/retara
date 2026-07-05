@@ -40,7 +40,11 @@ def _model_for(role: str) -> str:
     key = _ROLE_TO_KEY.get(role)
     if key is None:
         raise ValueError(f"unknown role {role!r}; expected one of {sorted(_ROLE_TO_KEY)}")
-    return load_models()[key]
+    # Env override (e.g. MAGENTA_MODEL_LARGE=llama-3.1-8b-instant): lets long
+    # cohort runs dodge per-model daily token caps on free tiers without
+    # touching the committed models.yaml. Documented in run logs when used.
+    override = os.environ.get(f"MAGENTA_MODEL_{key}")
+    return override or load_models()[key]
 
 
 def chat(role: str, messages: list[dict], **kw) -> str:
