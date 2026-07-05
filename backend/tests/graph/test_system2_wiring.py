@@ -1,4 +1,7 @@
+import json
 from unittest.mock import patch
+
+import openai
 
 from magenta.graph import nodes as N
 from magenta.offers import Arm, OfferDecision
@@ -64,3 +67,43 @@ def test_decide_skips_system2_when_disabled(monkeypatch):
         out = N.decide(_state(), deps=_Deps(s2=False))
     d.assert_not_called()
     assert out["audit_log"][0]["NODE"] == "DECIDE"
+
+
+## --------------------------------------------------------------------------- #
+## Degrade-to-S1: a 429 that survives llm.py's own retries (or any other
+## System-2 failure) must not kill the run — decide() falls back to the
+## System-1 bandit path and the audit trail honestly records the degradation.
+## --------------------------------------------------------------------------- #
+def _rate_limit_error() -> openai.RateLimitError:
+    import httpx
+
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    response = httpx.Response(status_code=429, request=request)
+    return openai.RateLimitError(
+        "Rate limit reached. Please try again in 1m21.216s.", response=response, body=None
+    )
+
+
+def test_decide_degrades_to_s1_when_deliberate_raises_rate_limit(monkeypatch):
+    monkeypatch.setattr(N, "featurize", lambda c: [0.0])
+    with patch("magenta.graph.system2.deliberate", side_effect=_rate_limit_error()) as d:
+        out = N.decide(_state(), deps=_Deps(s2=True))
+
+    d.assert_called_once()
+    assert isinstance(out["offer"], OfferDecision)
+    assert out["offer"].arm is Arm.NO_ACTION  # FakeBandit.select() from _Bandit above
+    payload = json.loads(out["audit_log"][0]["PAYLOAD"])
+    assert payload["path"] == "SYSTEM2_DEGRADED_S1"
+
+
+def test_decide_degrades_to_s1_on_any_deliberate_failure(monkeypatch):
+    """Not just RateLimitError — ANY System-2 failure degrades rather than
+    killing the run (brief: 'RateLimitError-after-retries (or any LLM
+    failure)')."""
+    monkeypatch.setattr(N, "featurize", lambda c: [0.0])
+    with patch("magenta.graph.system2.deliberate", side_effect=RuntimeError("boom")):
+        out = N.decide(_state(), deps=_Deps(s2=True))
+
+    assert isinstance(out["offer"], OfferDecision)
+    payload = json.loads(out["audit_log"][0]["PAYLOAD"])
+    assert payload["path"] == "SYSTEM2_DEGRADED_S1"

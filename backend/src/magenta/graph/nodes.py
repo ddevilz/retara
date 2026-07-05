@@ -156,6 +156,20 @@ def diagnose(state: OverallState, deps) -> dict:
 ## --------------------------------------------------------------------------- #
 ## 3. DECIDE — bandit pick over (catalog.eligible ∩ diagnosis.eligible_offer_ids)
 ## --------------------------------------------------------------------------- #
+def _bandit_decide(customer, diagnosis, eligible: list[Arm], deps) -> OfferDecision:
+    """System-1 bandit pick — the fallback path used both when System-2 is
+    disabled/not-triggered AND when System-2 fails (rate-limit exhaustion or
+    any other LLM error) and must degrade rather than kill the run."""
+    x = featurize(customer)
+    arm, propensity = deps.bandit.select(x, eligible)
+    return OfferDecision(
+        arm=arm,
+        cost=deps.catalog.cost(arm),
+        rationale=diagnosis.narrative,
+        propensity=propensity,
+    )
+
+
 def decide(state: OverallState, deps) -> dict:
     customer = deps.load_customer(state["customer_id"])
     diagnosis = state["diagnosis"]
@@ -167,22 +181,30 @@ def decide(state: OverallState, deps) -> dict:
 
     if (getattr(deps, "system2_enabled", False)
             and system2.should_deliberate(customer, diagnosis, deps.params.p90_clv)):
-        offer = system2.deliberate(customer, state.get("risk"), diagnosis, deps)
-        payload = {"arm": offer.arm.value, "cost": offer.cost, "path": "SYSTEM2",
-                   "eligible": [a.value for a in eligible],
-                   "rationale": offer.rationale}
-        return {"offer": offer,
-                "audit_log": [_audit("DECIDE_S2", state["customer_id"], payload)]}
+        try:
+            offer = system2.deliberate(customer, state.get("risk"), diagnosis, deps)
+            payload = {"arm": offer.arm.value, "cost": offer.cost, "path": "SYSTEM2",
+                       "eligible": [a.value for a in eligible],
+                       "rationale": offer.rationale}
+            return {"offer": offer,
+                    "audit_log": [_audit("DECIDE_S2", state["customer_id"], payload)]}
+        except Exception as exc:
+            # System-2 failed -- e.g. a 429 that survived llm.py's own bounded
+            # retries, or any other LLM/deliberation error. A single failure
+            # must never kill an unattended cohort run: degrade to the
+            # System-1 bandit path and record the degradation honestly in the
+            # audit trail (so run stats can count how often this fired)
+            # rather than dying, or silently pretending System-2 ran.
+            offer = _bandit_decide(customer, diagnosis, eligible, deps)
+            payload = {"arm": offer.arm.value, "cost": offer.cost,
+                       "propensity": offer.propensity, "path": "SYSTEM2_DEGRADED_S1",
+                       "eligible": [a.value for a in eligible],
+                       "error": type(exc).__name__, "rationale": offer.rationale}
+            return {"offer": offer,
+                    "audit_log": [_audit("DECIDE_S2", state["customer_id"], payload)]}
 
-    x = featurize(customer)
-    arm, propensity = deps.bandit.select(x, eligible)
-    offer = OfferDecision(
-        arm=arm,
-        cost=deps.catalog.cost(arm),
-        rationale=diagnosis.narrative,
-        propensity=propensity,
-    )
-    payload = {"arm": arm.value, "cost": offer.cost, "propensity": propensity,
+    offer = _bandit_decide(customer, diagnosis, eligible, deps)
+    payload = {"arm": offer.arm.value, "cost": offer.cost, "propensity": offer.propensity,
                "eligible": [a.value for a in eligible],
                "rationale": offer.rationale}
     return {"offer": offer,
