@@ -91,7 +91,12 @@ class RetentionChat:
             {"role": "system", "content": system},
             {"role": "user", "content": f"Dialogue act: {act_kind.value}. Customer said: {user_text}"},
         ]
-        return chat(role="large", messages=messages)
+        try:
+            return chat(role="large", messages=messages)
+        except Exception:
+            # Live-demo resilience: an LLM/network blip must not crash the turn.
+            return ("Thanks for bearing with me — let me make sure we get this "
+                    "sorted for you. Could you tell me a bit more?")
 
     def respond(self, user_text: str) -> ChatReply:
         self.state.turns.append(Turn(speaker="customer", text=user_text))
