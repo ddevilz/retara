@@ -31,6 +31,7 @@ from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persi
 from magenta.graph.tables import init_graph_tables
 from magenta.llm import chat, chat_structured
 from magenta.memory.embed import LocalEmbedder
+from magenta.memory.eval import run_memory_eval
 from magenta.memory.store import CustomerMemory
 from magenta.offers import Arm, OfferCatalog, OfferDecision
 from magenta.sim.oracle import ResponseOracle, SimParams
@@ -661,26 +662,27 @@ def eval_report(
     typer.echo("\nAll hard checks passed.")
 
 
-## ---- appended by lab 12 task 12.5: temporal customer memory CLI ----------
+## ---- appended by lab 12 tasks 12.5+12.6: temporal customer memory CLI ----
 
 
 @app.command("memory")
 def memory_cmd(action: str, customer_id: str = typer.Argument(None)):
     """show <customer_id> -- print a customer's ordered memory timeline.
-
-    (Task 12.6 adds the `eval` action once magenta.memory.eval exists.)
+    eval -- run the mini temporal-retrieval eval and print its accuracy.
     """
-    m = CustomerMemory(get_conn(), embedder=LocalEmbedder())
-    m.init_tables()
     if action == "show":
         if customer_id is None:
             typer.secho("usage: magenta memory show <customer_id>", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=2)
+        m = CustomerMemory(get_conn(), embedder=LocalEmbedder())
+        m.init_tables()
         for e in m.timeline(customer_id):
             span = f"{e.valid_from}->{e.valid_to or 'now'}"
             typer.echo(f"[{span}] {e.subject} {e.relation} {e.object}")
+    elif action == "eval":
+        typer.echo(run_memory_eval())
     else:
-        typer.secho(f"unknown memory action {action!r}; choose from: show",
+        typer.secho(f"unknown memory action {action!r}; choose from: show, eval",
                     fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2)
 
