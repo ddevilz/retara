@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import hashlib
+import random
 import time
 from collections import Counter
 
@@ -17,17 +18,23 @@ from magenta.brain.parity import main as parity_main
 from magenta.brain.policy import BrainPolicy
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
-from magenta.brain.uplift import UpliftModel, classify_segment
+from magenta.brain.uplift import Segment, UpliftModel, classify_segment
 from magenta.chat.persona import Archetype, PersonaAgent, make_persona
 from magenta.chat.runner import run_negotiation
 from magenta.config import configs_dir, data_dir, load_models
+from magenta.cost.cache import SemanticCache
+from magenta.cost.cascade import cascade
+from magenta.cost.meter import CostMeter
 from magenta.db import get_conn
 from magenta.evalx.golden import run_golden
 from magenta.evalx.hardchecks import scan_guardrail_compliance, scan_holdout_purity
 from magenta.evalx.judge import judge_sample
 from magenta.experiment import Scorecard, run_experiment
+from magenta.graph import batch_diagnose
 from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scorecards
 from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
+from magenta.graph.nodes import _DIAGNOSE_SYSTEM, _diagnose_user_prompt, _observables
+from magenta.graph.state import RiskUpliftReport, Timing
 from magenta.graph.tables import init_graph_tables
 from magenta.llm import chat, chat_structured
 from magenta.memory.embed import LocalEmbedder
@@ -35,7 +42,7 @@ from magenta.memory.eval import run_memory_eval
 from magenta.memory.store import CustomerMemory
 from magenta.offers import Arm, OfferCatalog, OfferDecision
 from magenta.sim.oracle import ResponseOracle, SimParams
-from magenta.sim.population import Segment, generate_population
+from magenta.sim.population import generate_population
 from magenta.sim.stats import format_stats, population_stats
 
 app = typer.Typer(help="Magenta Retain — churn retention agent CLI.", no_args_is_help=True)
@@ -685,6 +692,114 @@ def memory_cmd(action: str, customer_id: str = typer.Argument(None)):
         typer.secho(f"unknown memory action {action!r}; choose from: show, eval",
                     fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2)
+
+
+## ---- appended by lab 13 task 13.4: cost/rate cascade + cache CLI ----
+
+cost_app = typer.Typer(help="LLM cost/rate cascade + cache reporting.")
+app.add_typer(cost_app, name="cost")
+
+_ROOT_CAUSE_TAGS = (
+    "OVERAGE", "DROPPED_CALLS", "BILL_SHOCK", "COMPETITOR_OFFER",
+    "CONTRACT_EXPIRY", "SERVICE_COMPLAINT",
+)
+
+
+def _extract_tag(text: str) -> str | None:
+    """Best-effort root-cause tag extraction from a free-text diagnosis
+    answer, for the quality-retained agreement check below (the cascade's
+    chat_fn returns plain text, not a structured Diagnosis)."""
+    upper = (text or "").upper()
+    for tag in _ROOT_CAUSE_TAGS:
+        if tag in upper:
+            return tag
+    return None
+
+
+@cost_app.command("report")
+def cost_report(
+    n: int = typer.Option(200, "-n", "--n", help="population sample to draw the cohort from"),
+    seed: int = typer.Option(7, help="population + risk/uplift seed"),
+    sample: int = typer.Option(100, help="quality-retained sample size (cascade vs forced-large)"),
+) -> None:
+    """Run cohort diagnosis under the semantic cache + confidence cascade
+    (Tasks 13.1-13.4), then print the CostMeter report plus a
+    quality-retained score.
+
+    Only PERSUADABLE/engaged customers are diagnosed, mirroring the graph's
+    own engage-gate (`sense` -> `should_engage` -> `diagnose`).
+
+    quality_retained = agreement rate, on a random sample, between the
+    cascade's actual answer and forcing that same prompt straight to the
+    large role -- an honest check that cache+cascade are not silently
+    trading away diagnosis quality for cost.
+
+    est_cost_per_decision ~= EUR0.00 (Groq free tier): the real budget is the
+    <=30 RPM / 1k-req/day LARGE-role rate limit, not money -- the semantic
+    cache and confidence cascade are the RATE levers that keep a cohort run
+    under that cap, which is what this report actually measures.
+    """
+    customers, _ = generate_population(n, seed=seed)
+    risk = _load_or_train_risk(seed)
+    uplift = _load_or_train_uplift(seed)
+
+    reports: dict[str, RiskUpliftReport] = {}
+    for c in customers:
+        a = risk.score(c)
+        tau = uplift.tau(c)
+        segment = classify_segment(a.p_churn, tau)
+        if segment is not Segment.PERSUADABLE:
+            continue  # mirrors the graph's engage-gate: only engaged customers reach diagnose
+        timing = Timing.ACT_NOW if a.band.value in ("HIGH", "CRITICAL") else Timing.SNOOZE
+        reports[c.customer_id] = RiskUpliftReport(
+            p_churn=a.p_churn, band=a.band, drivers=a.drivers, tau_hat=tau,
+            segment=segment, engage=True, timing=timing,
+        )
+
+    if not reports:
+        typer.echo("no PERSUADABLE customers in this cohort -- nothing to diagnose.")
+        raise typer.Exit(code=0)
+
+    cache = SemanticCache(get_conn(), LocalEmbedder())
+    meter = CostMeter()
+    try:
+        batch_diagnose.diagnose_cohort(customers, reports, deps=None, meter=meter, cache=cache)
+
+        by_id = {c.customer_id: c for c in customers}
+        rng = random.Random(seed)
+        sample_ids = rng.sample(list(reports), k=min(sample, len(reports)))
+        agree = 0
+        for cid in sample_ids:
+            messages = [
+                {"role": "system", "content": _DIAGNOSE_SYSTEM},
+                {"role": "user", "content": _diagnose_user_prompt(reports[cid], _observables(by_id[cid]))},
+            ]
+            cascade_answer = cascade(
+                messages, batch_diagnose._chat, batch_diagnose._confidence_from_answer
+            ).answer
+            forced_large = batch_diagnose._chat("large", messages)
+            if _extract_tag(cascade_answer) == _extract_tag(forced_large):
+                agree += 1
+        quality_retained = agree / len(sample_ids) if sample_ids else 1.0
+    except Exception as exc:  # surface config/network errors cleanly, no stack trace
+        typer.secho(
+            f"cost report failed: {exc}\nHint: set GROQ_API_KEY (default provider) or OPENAI_API_KEY + optional OPENAI_BASE_URL.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    r = meter.report()
+    typer.echo("=== Cost/rate report ===")
+    typer.echo(f"  total_decisions      {r['total_decisions']}")
+    typer.echo(f"  pct_routed_cheap     {r['pct_routed_cheap']:6.2%}")
+    typer.echo(f"  cache_hit_rate       {r['cache_hit_rate']:6.2%}")
+    typer.echo(f"  escalation_rate      {r['escalation_rate']:6.2%}")
+    typer.echo(f"  quality_retained     {quality_retained:6.2%}  (n={len(sample_ids)} vs forced-large)")
+    typer.echo(
+        "  est_cost_per_decision  EUR0.00 (Groq free tier) -- the real budget "
+        "is the <=30 RPM large-role rate limit; cache + cascade are the rate levers."
+    )
 
 
 if __name__ == "__main__":
