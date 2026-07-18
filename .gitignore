@@ -28,6 +28,10 @@ data/telco_real.csv
 frontend/node_modules/
 frontend/dist/
 
+# BuildRaq landing page
+buildraq/node_modules/
+buildraq/dist/
+
 # OS / editor
 .DS_Store
 .idea/
