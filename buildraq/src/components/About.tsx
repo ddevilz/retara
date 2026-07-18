@@ -21,7 +21,7 @@ export default function About() {
   return (
     <section className="overflow-hidden bg-white pb-12 pt-16 sm:pb-16 sm:pt-20 lg:pb-24 lg:pt-32">
       <div className="mx-auto max-w-[1440px]">
-        <BadgeRow number="1" label="Introducing Axion" borderClass="border-gray-200" />
+        <BadgeRow number="1" label="Introducing BuildRaq" borderClass="border-gray-200" />
 
         <h2 className="mb-12 px-5 text-[clamp(1.5rem,4vw,3.2rem)] font-medium leading-[1.12] tracking-[-0.02em] text-gray-900 sm:mb-16 sm:px-8 lg:mb-28 lg:px-12">
           Strategy-led creatives, delivering
