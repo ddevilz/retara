@@ -303,3 +303,12 @@ def test_total_budget_exhausted_raises_before_max_attempts(monkeypatch, fake_sle
 
     assert client.create_calls < llm.RATE_LIMIT_MAX_ATTEMPTS
     assert sum(fake_sleep) <= llm.RATE_LIMIT_TOTAL_BUDGET_S
+
+
+def test_parse_retry_after_handles_milliseconds():
+    from magenta.llm import _parse_retry_after_seconds
+
+    assert _parse_retry_after_seconds("Please try again in 510ms.") == 0.51
+    assert _parse_retry_after_seconds("try again in 1m21.216s") == pytest.approx(81.216)
+    assert _parse_retry_after_seconds("try again in 21.5s") == 21.5
+    assert _parse_retry_after_seconds("no hint here") is None

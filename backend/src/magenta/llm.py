@@ -37,6 +37,7 @@ RATE_LIMIT_MAX_ATTEMPTS = 5       # total call attempts (initial + retries)
 RATE_LIMIT_ATTEMPT_SLEEP_CAP_S = 300.0   # never sleep longer than this per attempt
 RATE_LIMIT_TOTAL_BUDGET_S = 900.0        # never sleep more than this in total
 
+_RETRY_AFTER_MS_RE = re.compile(r"in\s+(\d+(?:\.\d+)?)ms", re.IGNORECASE)
 _RETRY_AFTER_MIN_SEC_RE = re.compile(r"in\s+(\d+)m(\d+(?:\.\d+)?)s", re.IGNORECASE)
 _RETRY_AFTER_SEC_RE = re.compile(r"in\s+(\d+(?:\.\d+)?)s", re.IGNORECASE)
 
@@ -48,6 +49,9 @@ def _parse_retry_after_seconds(message: str) -> float | None:
     "...in 21.216s" (seconds only). Returns None if no hint is found, in
     which case the caller falls back to the per-attempt sleep cap.
     """
+    m = _RETRY_AFTER_MS_RE.search(message)  # "in 510ms" — check BEFORE the s-form
+    if m:
+        return float(m.group(1)) / 1000.0
     m = _RETRY_AFTER_MIN_SEC_RE.search(message)
     if m:
         minutes, seconds = m.groups()
@@ -74,7 +78,9 @@ def _call_with_retry(fn, *args, **kw):
                 raise
             wait = _parse_retry_after_seconds(str(exc))
             if wait is None:
-                wait = RATE_LIMIT_ATTEMPT_SLEEP_CAP_S
+                # no hint -> short exponential-ish default, NOT the 300s cap
+                # (an unparsed "in 510ms" once cost a 300s nap per hiccup).
+                wait = 5.0 * attempt
             wait = min(wait, RATE_LIMIT_ATTEMPT_SLEEP_CAP_S)
             if total_slept + wait > RATE_LIMIT_TOTAL_BUDGET_S:
                 raise
