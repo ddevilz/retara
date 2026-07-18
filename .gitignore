@@ -40,3 +40,4 @@ docs/
 .superpowers/
 skills-lock.json
 **/data/models/
+data/parity_report.txt

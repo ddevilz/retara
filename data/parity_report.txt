@@ -1,9 +1,0 @@
-PARITY REPORT -- real IBM Telco data vs Magenta simulator
-Same pipeline: LightGBM (RISK_LGBM_PARAMS) -> isotonic calibration (FrozenEstimator) -> held-out AUC/Brier/ECE. seed=7, 75/25 train/test split.
-
-DATASET      N_TRAIN   N_TEST      AUC    BRIER      ECE
---------------------------------------------------------
-real            5282     1761   0.8296   0.1418   0.0245
-sim             4500     1500   0.7240   0.1750   0.0121
-
-INTERPRETATION: sim is HARDER than real data (AUC gap +0.106) -- consistent with the claim that Magenta's simulator is at least as difficult to predict as real telecom churn.
