@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    port: 5173,
+    strictPort: true,
     // Dev proxy: the api client fetches relative "/api/..." paths; without
     // this every dev fetch silently returned the SPA shell (Lab 11 review
     // Critical). SSE passes through untouched.
