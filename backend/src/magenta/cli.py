@@ -35,7 +35,6 @@ from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scoreca
 from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
 from magenta.graph.nodes import _DIAGNOSE_SYSTEM, _diagnose_user_prompt, _observables
 from magenta.graph.state import RiskUpliftReport, Timing
-from magenta.graph.tables import init_graph_tables
 from magenta.llm import chat, chat_structured
 from magenta.memory.embed import LocalEmbedder
 from magenta.memory.eval import run_memory_eval
@@ -228,7 +227,6 @@ def experiment(
     deps = None
     if policy in {"risk_rules", "agent_s1", "agent"}:
         conn = get_conn()
-        init_graph_tables(conn)
         _, hidden = generate_population(n=n, seed=seed)
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
         try:
@@ -266,7 +264,6 @@ def ablation(
     """
     def deps_factory(n_: int, seed_: int) -> GraphDeps:
         conn = get_conn()
-        init_graph_tables(conn)
         _, hidden = generate_population(n=n_, seed=seed_)
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed_)
         try:
@@ -530,7 +527,6 @@ def run_one(customer_id: str,
     customer = by_id.get(customer_id, customers[0])
 
     conn = get_conn()
-    init_graph_tables(conn)
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
     try:
         bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
@@ -590,7 +586,6 @@ def chat_cmd(
     target = by_id.get(customer, customers[0]) if human else customers[0]
 
     conn = get_conn()
-    init_graph_tables(conn)
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
     try:
         bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet

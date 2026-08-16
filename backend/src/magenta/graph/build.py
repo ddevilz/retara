@@ -21,14 +21,16 @@ import; the env var is the switch.
 from __future__ import annotations
 
 import functools
-import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from magenta.config import data_dir
 from magenta.graph import nodes as N
@@ -94,13 +96,28 @@ def open_sqlite_saver(path: str | Path | None = None):
     return SqliteSaver.from_conn_string(str(db_path))
 
 
-def persist_audit(conn, audit_log: list[dict]) -> None:
-    """Flush the accumulated audit_log into AUDIT_LOG (one row per node run)."""
+def persist_audit(conn: Connection, tenant_id: str, audit_log: list[dict]) -> None:
+    """Flush the accumulated audit_log into AUDIT_LOG (one row per node run).
+
+    `nodes._audit()` already json.dumps()s PAYLOAD once and stamps TS as an ISO
+    string (audit_log entries flow through LangGraph's operator.add state
+    reducer, so they must stay plain JSON-safe values, not psycopg-specific
+    types). Re-applying json.dumps() here would double-encode PAYLOAD into a
+    JSON string instead of a JSON object, so it's passed straight through and
+    CAST to jsonb; TS is parsed back into a datetime for the TIMESTAMPTZ column.
+    """
     for entry in audit_log:
         conn.execute(
-            "INSERT INTO AUDIT_LOG (NODE, CUSTOMER_ID, TS, PAYLOAD) "
-            "VALUES (?, ?, ?, ?)",
-            (entry["NODE"], entry["CUSTOMER_ID"], entry["TS"],
-             entry.get("PAYLOAD", json.dumps({}))),
+            text(
+                'INSERT INTO "AUDIT_LOG" ("TENANT_ID", "NODE", "CUSTOMER_ID", "TS", "PAYLOAD") '
+                "VALUES (:tenant_id, :node, :customer_id, :ts, CAST(:payload AS jsonb))"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "node": entry["NODE"],
+                "customer_id": entry["CUSTOMER_ID"],
+                "ts": datetime.fromisoformat(entry["TS"]),
+                "payload": entry.get("PAYLOAD", "{}"),
+            },
         )
     conn.commit()

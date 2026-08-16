@@ -31,7 +31,6 @@ from magenta.brain.uplift import UpliftModel
 from magenta.config import configs_dir
 from magenta.db import get_conn
 from magenta.graph.build import GraphDeps
-from magenta.graph.tables import init_graph_tables
 from magenta.llm import chat, chat_structured
 from magenta.offers import Arm, OfferCatalog
 from magenta.sim.oracle import ResponseOracle, SimParams
@@ -107,7 +106,6 @@ def get_graph_deps() -> GraphDeps:
     doesn't fit here)."""
     seed = DEMO_POP_SEED
     conn = get_conn()
-    init_graph_tables(conn)
     _, hidden = generate_population(DEMO_POP_N, seed=seed)
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
     try:

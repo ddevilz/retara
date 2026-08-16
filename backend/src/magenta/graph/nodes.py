@@ -10,7 +10,6 @@ Contract guarantees enforced here:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -27,6 +26,7 @@ from magenta.graph.state import (
 from magenta.graph.tables import (
     contacts_since,
     fulfillment_for,
+    idempotency_key,
     insert_fulfillment,
     record_contact,
 )
@@ -249,9 +249,8 @@ def guardrail(state: OverallState, deps) -> dict:
         failed.append("CONSENT")
 
     # 2) frequency cap (Store/ledger)
-    since = (datetime.now(timezone.utc)
-             - timedelta(days=deps.params.freq_cap_days)).isoformat()
-    if contacts_since(deps.conn, state["customer_id"], since) >= deps.params.freq_cap_max:
+    since = datetime.now(timezone.utc) - timedelta(days=deps.params.freq_cap_days)
+    if contacts_since(deps.conn, state["tenant_id"], state["customer_id"], since) >= deps.params.freq_cap_max:
         failed.append("FREQ_CAP")
 
     # 3) min-margin: post-offer margin must clear the arm's floor
@@ -294,13 +293,9 @@ def guardrail_route(state: OverallState) -> str:
 ## --------------------------------------------------------------------------- #
 ## 5. ACT — idempotent fulfillment; holdout ⇒ shadow-log only. (§5.5 / risk #4)
 ## --------------------------------------------------------------------------- #
-def idempotency_key(customer_id: str, campaign_id: str, arm: Arm) -> str:
-    raw = f"{customer_id}:{campaign_id}:{arm.value}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
 def act(state: OverallState, deps) -> dict:
     offer = state["offer"]
+    tenant_id = state["tenant_id"]
     cid, camp = state["customer_id"], state["campaign_id"]
 
     if offer is None or offer.arm is Arm.NO_ACTION:
@@ -310,17 +305,17 @@ def act(state: OverallState, deps) -> dict:
     if state["holdout"]:
         # shadow: record the counterfactual, fulfill nothing, no contact ledger.
         shadow = {"status": "SHADOW", "arm": offer.arm.value, "cost": offer.cost,
-                  "idempotency_key": idempotency_key(cid, camp, offer.arm)}
+                  "idempotency_key": idempotency_key(tenant_id, cid, camp, offer.arm)}
         return {"fulfillment": shadow,
                 "audit_log": [_audit("ACT", cid, {"status": "SHADOW",
                                                   "arm": offer.arm.value})]}
 
-    key = idempotency_key(cid, camp, offer.arm)
-    already = fulfillment_for(deps.conn, key) is not None
-    row = insert_fulfillment(deps.conn, key, cid, camp, offer.arm.value,
+    key = idempotency_key(tenant_id, cid, camp, offer.arm)
+    already = fulfillment_for(deps.conn, tenant_id, key) is not None
+    row = insert_fulfillment(deps.conn, tenant_id, key, cid, camp, offer.arm.value,
                              offer.cost, "FULFILLED")
     if not already:
-        record_contact(deps.conn, cid, camp, _now_iso())
+        record_contact(deps.conn, tenant_id, cid, camp, datetime.now(timezone.utc))
     return {"fulfillment": row,
             "audit_log": [_audit("ACT", cid,
                                  {"status": "FULFILLED" if not already else "IDEMPOTENT_HIT",

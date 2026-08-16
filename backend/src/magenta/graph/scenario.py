@@ -27,7 +27,6 @@ from magenta.brain.risk import Band, Driver, RiskAssessment
 from magenta.config import configs_dir
 from magenta.graph.build import GraphDeps, build_graph
 from magenta.graph.state import Diagnosis
-from magenta.graph.tables import init_graph_tables
 from magenta.offers import Arm, OfferCatalog
 from magenta.sim.oracle import ResponseOracle, SimParams
 from magenta.sim.population import Customer, HiddenState, Segment
@@ -252,7 +251,6 @@ def run_scenario(customer_kwargs: dict, hidden_kwargs: dict, holdout: bool = Fal
 
     conn = sqlite3.connect(":memory:")
     try:
-        init_graph_tables(conn)
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
         deps = GraphDeps(
             risk=_ScenarioRisk(p_churn),
