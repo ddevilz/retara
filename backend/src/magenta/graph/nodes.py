@@ -249,8 +249,14 @@ def guardrail(state: OverallState, deps) -> dict:
         failed.append("CONSENT")
 
     # 2) frequency cap (Store/ledger)
+    # tenant_id: state.get(..., deps.tenant_id) not state["tenant_id"] -- most
+    # current callers (cli.py, api/routes_stream.py, graph/policy.py, and their
+    # tests) don't seed "tenant_id" into the init state dict yet. GraphDeps
+    # always has a real tenant_id (default DEFAULT_TENANT_ID), so falling back
+    # to it here is a one-place fix instead of patching every caller's dict.
     since = datetime.now(timezone.utc) - timedelta(days=deps.params.freq_cap_days)
-    if contacts_since(deps.conn, state["tenant_id"], state["customer_id"], since) >= deps.params.freq_cap_max:
+    tenant_id = state.get("tenant_id", deps.tenant_id)
+    if contacts_since(deps.conn, tenant_id, state["customer_id"], since) >= deps.params.freq_cap_max:
         failed.append("FREQ_CAP")
 
     # 3) min-margin: post-offer margin must clear the arm's floor
@@ -295,7 +301,7 @@ def guardrail_route(state: OverallState) -> str:
 ## --------------------------------------------------------------------------- #
 def act(state: OverallState, deps) -> dict:
     offer = state["offer"]
-    tenant_id = state["tenant_id"]
+    tenant_id = state.get("tenant_id", deps.tenant_id)  # see guardrail()'s comment
     cid, camp = state["customer_id"], state["campaign_id"]
 
     if offer is None or offer.arm is Arm.NO_ACTION:

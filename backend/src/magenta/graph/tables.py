@@ -17,6 +17,10 @@ from sqlalchemy.engine import Connection
 
 from magenta.offers import Arm
 
+# Placeholder tenant for single-tenant callers (CLI, demo API) until Clerk auth
+# lands in Phase 1.2 and resolves a real organisation per request.
+DEFAULT_TENANT_ID = "org_default"
+
 
 def idempotency_key(tenant_id: str, customer_id: str, campaign_id: str, arm: Arm) -> str:
     """TENANT_ID is part of the key. Without it, two tenants using the same customer

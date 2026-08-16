@@ -97,7 +97,7 @@ async def run_one(req: RunOneRequest):
         # Persist the audit trail so the 10.2 customer-360 view shows this run.
         conn = getattr(deps, "conn", None)
         if conn is not None and audit_rows:
-            persist_audit(conn, audit_rows)
+            persist_audit(conn, deps.tenant_id, audit_rows)
         yield sse_event("done", {"customer_id": req.customer_id})
 
     return EventSourceResponse(gen())

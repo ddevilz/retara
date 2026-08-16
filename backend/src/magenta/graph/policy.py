@@ -40,7 +40,7 @@ class AgentPolicy:
             self._init_state(c),
             config={"configurable": {"thread_id": f"{c.customer_id}:{self.deps.campaign_id}"}},
         )
-        persist_audit(self.deps.conn, final.get("audit_log", []))
+        persist_audit(self.deps.conn, self.deps.tenant_id, final.get("audit_log", []))
         verdict = final.get("verdict")
         if verdict is not None and verdict.decision == "REJECT":
             return None

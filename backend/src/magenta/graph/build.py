@@ -35,6 +35,7 @@ from sqlalchemy.engine import Connection
 from magenta.config import data_dir
 from magenta.graph import nodes as N
 from magenta.graph.state import OverallState
+from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.memory.store import CustomerMemory
 
 
@@ -51,6 +52,7 @@ class GraphDeps:
     load_customer: Callable[[str], object]
     checkpointer: object | None = None  # None => InMemorySaver (tests)
     campaign_id: str = "AGENT-EXP"
+    tenant_id: str = DEFAULT_TENANT_ID  # Phase 1.3's get_graph_deps(tenant_id) sets this
     system2_enabled: bool = False  # Lab 7 Task 7.6 wires System-2; "agent" rung sets True
     memory: CustomerMemory | None = None  # Lab 12: temporal customer memory (optional)
 
