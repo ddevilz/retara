@@ -31,6 +31,7 @@ from magenta.brain.uplift import UpliftModel
 from magenta.config import configs_dir
 from magenta.db import get_conn
 from magenta.graph.build import GraphDeps
+from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.llm import chat, chat_structured
 from magenta.offers import Arm, OfferCatalog
 from magenta.sim.oracle import ResponseOracle, SimParams
@@ -109,7 +110,7 @@ def get_graph_deps() -> GraphDeps:
     _, hidden = generate_population(DEMO_POP_N, seed=seed)
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
     try:
-        bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+        bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
     except sqlite3.OperationalError:
         pass
     sim_params = SimParams.load(configs_dir() / "sim_params.yaml")

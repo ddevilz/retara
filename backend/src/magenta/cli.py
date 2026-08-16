@@ -35,6 +35,7 @@ from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scoreca
 from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
 from magenta.graph.nodes import _DIAGNOSE_SYSTEM, _diagnose_user_prompt, _observables
 from magenta.graph.state import RiskUpliftReport, Timing
+from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.llm import chat, chat_structured
 from magenta.memory.embed import LocalEmbedder
 from magenta.memory.eval import run_memory_eval
@@ -230,7 +231,7 @@ def experiment(
         _, hidden = generate_population(n=n, seed=seed)
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
         try:
-            bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+            bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
         except sqlite3.OperationalError:
             pass
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
@@ -267,7 +268,7 @@ def ablation(
         _, hidden = generate_population(n=n_, seed=seed_)
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed_)
         try:
-            bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+            bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
         except sqlite3.OperationalError:
             pass
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
@@ -529,7 +530,7 @@ def run_one(customer_id: str,
     conn = get_conn()
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
     try:
-        bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+        bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
     except sqlite3.OperationalError:
         pass
     sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
@@ -555,7 +556,7 @@ def run_one(customer_id: str,
         final = graph.invoke(
             init, config={"configurable": {"thread_id": f"{customer.customer_id}:{campaign}"}})
     persist_audit(conn, deps.tenant_id, final.get("audit_log", []))
-    deps.bandit.save(conn)
+    deps.bandit.save(conn, deps.tenant_id)
     _pretty(final)
 
 
@@ -588,7 +589,7 @@ def chat_cmd(
     conn = get_conn()
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
     try:
-        bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
+        bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
     except sqlite3.OperationalError:
         pass
     sim_params = SimParams.load(configs_dir() / "sim_params.yaml")

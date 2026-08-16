@@ -3,16 +3,17 @@
 Per arm a: Gaussian posterior on theta_a with precision A_a and b_a where
   A_a = lam*I + sum x x^T,   b_a = sum r*x,   mean = A_a^-1 b_a,  cov = sigma2 * A_a^-1.
 select() samples theta_a ~ N(mean, cov) per eligible arm, argmax of x·theta.
-Posteriors persisted in SQLite table BANDIT_POSTERIOR (ALL_CAPS columns).
+Posteriors persisted in Postgres table BANDIT_POSTERIOR, tenant-scoped by
+TENANT_ID (composite PK with ARM; ALL_CAPS columns, schema owned by Alembic).
 Reward = retained * gross_margin_monthly * 12 - offer.cost (set by caller).
 """
 from __future__ import annotations
 
 import numpy as np
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from magenta.offers import Arm
-
-_TABLE = "BANDIT_POSTERIOR"
 
 
 class ThompsonBandit:
@@ -76,31 +77,51 @@ class ThompsonBandit:
         self._b[arm] = self._b[arm] + reward * x
         self._n[arm] += 1
 
-    def save(self, conn) -> None:
-        conn.execute(
-            f"CREATE TABLE IF NOT EXISTS {_TABLE} ("
-            "ARM TEXT PRIMARY KEY, A_MATRIX BLOB, B_VECTOR BLOB, N_UPDATES INTEGER)"
-        )
+    def save(self, conn: Connection, tenant_id: str) -> None:
+        """Schema lives in Alembic (migration 0001). A_MATRIX/B_VECTOR are raw
+        float64 buffers with no embedded dtype — `load` must reshape with the
+        same dim and dtype or it reinterprets the bits silently."""
         for a in self.arms:
             conn.execute(
-                f"INSERT OR REPLACE INTO {_TABLE} (ARM, A_MATRIX, B_VECTOR, N_UPDATES) "
-                "VALUES (?, ?, ?, ?)",
-                (
-                    a.value,
-                    self._A[a].astype(np.float64).tobytes(),
-                    self._b[a].astype(np.float64).tobytes(),
-                    self._n[a],
+                text(
+                    'INSERT INTO "BANDIT_POSTERIOR" '
+                    '("TENANT_ID", "ARM", "A_MATRIX", "B_VECTOR", "N_UPDATES") '
+                    "VALUES (:tenant_id, :arm, :a, :b, :n) "
+                    'ON CONFLICT ("TENANT_ID", "ARM") DO UPDATE SET '
+                    '"A_MATRIX" = EXCLUDED."A_MATRIX", '
+                    '"B_VECTOR" = EXCLUDED."B_VECTOR", '
+                    '"N_UPDATES" = EXCLUDED."N_UPDATES"'
                 ),
+                {
+                    "tenant_id": tenant_id,
+                    "arm": a.value,
+                    "a": self._A[a].astype(np.float64).tobytes(),
+                    "b": self._b[a].astype(np.float64).tobytes(),
+                    "n": self._n[a],
+                },
             )
         conn.commit()
 
-    def load(self, conn) -> None:
-        cur = conn.execute(f"SELECT ARM, A_MATRIX, B_VECTOR, N_UPDATES FROM {_TABLE}")
+    def load(self, conn: Connection, tenant_id: str) -> None:
+        """Tenant-scoped. A tenant with no saved rows leaves the bandit at its
+        prior (no error) — that's the cold-start path every CLI/API call site
+        hits on a fresh BANDIT_POSTERIOR table."""
+        rows = conn.execute(
+            text(
+                'SELECT "ARM", "A_MATRIX", "B_VECTOR", "N_UPDATES" '
+                'FROM "BANDIT_POSTERIOR" WHERE "TENANT_ID" = :tenant_id'
+            ),
+            {"tenant_id": tenant_id},
+        ).mappings().all()
         by_value = {a.value: a for a in self.arms}
-        for arm_val, a_blob, b_blob, n in cur.fetchall():
-            arm = by_value.get(arm_val)
+        for row in rows:
+            arm = by_value.get(row["ARM"])
             if arm is None:
-                continue
-            self._A[arm] = np.frombuffer(a_blob, dtype=np.float64).reshape(self.dim, self.dim).copy()
-            self._b[arm] = np.frombuffer(b_blob, dtype=np.float64).reshape(self.dim).copy()
-            self._n[arm] = int(n)
+                continue  # an arm retired since this posterior was written
+            self._A[arm] = np.frombuffer(
+                row["A_MATRIX"], dtype=np.float64
+            ).reshape(self.dim, self.dim).copy()
+            self._b[arm] = np.frombuffer(
+                row["B_VECTOR"], dtype=np.float64
+            ).reshape(self.dim).copy()
+            self._n[arm] = int(row["N_UPDATES"])
