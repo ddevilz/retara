@@ -1,26 +1,36 @@
-"""Shared SQLite connection helper for the app DB (data/magenta.db, gitignored).
+"""Postgres connection layer.
 
-Every module from Lab 6 onward that needs the app-wide DB (as opposed to a
-throwaway `:memory:` connection in tests) opens it through here so the path
-resolution (repo-root-anchored via `magenta.config.data_dir`, NOT
-cwd-relative) lives in exactly one place.
+SQLAlchemy Core, not the ORM: this repo writes deliberate SQL and keeps doing so.
+`get_conn()` keeps its name from the SQLite era so call sites read the same, but it
+now returns a SQLAlchemy `Connection` — callers use `text()` with named parameters
+(`:name`), not `?` placeholders, and `conn.commit()` still applies.
 """
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
+import os
+from functools import lru_cache
 
-from magenta.config import data_dir
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.engine import Connection
 
 
-def get_conn(path: str | Path | None = None) -> sqlite3.Connection:
-    """Open the shared app DB. Default: <repo_root>/data/magenta.db.
+def database_url() -> str:
+    url = os.environ.get("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "DATABASE_URL is not set. Local dev: "
+            "postgresql+psycopg://magenta:magenta@localhost:5433/magenta"
+        )
+    return url
 
-    Sets row_factory = sqlite3.Row so callers can do row["COLUMN"] access
-    (matches the dict-like access `magenta.graph.tables` helpers rely on).
-    """
-    db_path = Path(path) if path is not None else data_dir() / "magenta.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    return conn
+
+@lru_cache(maxsize=1)
+def get_engine() -> Engine:
+    """One pooled engine per process. `pool_pre_ping` survives Postgres restarts
+    and Railway's connection recycling."""
+    return create_engine(database_url(), pool_pre_ping=True, future=True)
+
+
+def get_conn() -> Connection:
+    """A new connection from the pool. Caller closes it (use as a context manager)."""
+    return get_engine().connect()
