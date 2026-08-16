@@ -13,6 +13,7 @@ from magenta.memory.store import CustomerMemory
 from magenta.offers import Arm, OfferDecision
 from magenta.sim.oracle import Outcome
 from magenta.sim.population import generate_population
+from tests.db_fixtures import migrated_db  # noqa: F401
 
 
 class _SpyChat:
