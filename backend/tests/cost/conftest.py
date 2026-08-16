@@ -2,10 +2,10 @@
 diagnose_cohort)."""
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 
 import pytest
+from sqlalchemy.engine import Connection
 
 from magenta.brain.risk import Band, Driver
 from magenta.brain.uplift import Segment
@@ -44,7 +44,7 @@ class SmallCohort:
     customers: list
     reports: dict
     deps: object
-    conn: sqlite3.Connection
+    conn: Connection
     embedder: object = field(default_factory=LocalEmbedder)
 
 
@@ -56,12 +56,10 @@ def _shared_embedder():
 
 
 @pytest.fixture
-def small_cohort(_shared_embedder):
+def small_cohort(_shared_embedder, db_conn):
     """2 customers with IDENTICAL driver signatures -> the SemanticCache key
     text is byte-identical -> 1 real LLM call, 1 cache hit."""
     customers = [_Customer("CUST-1"), _Customer("CUST-2")]
     reports = {"CUST-1": _report(), "CUST-2": _report()}
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
     return SmallCohort(customers=customers, reports=reports, deps=object(),
-                       conn=conn, embedder=_shared_embedder)
+                       conn=db_conn, embedder=_shared_embedder)

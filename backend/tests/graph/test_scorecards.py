@@ -36,15 +36,13 @@ def test_write_scorecards_schema(tmp_path):
 
 
 @pytest.mark.slow
-def test_ladder_ordering_agent_ge_rules_small_n():
+def test_ladder_ordering_agent_ge_rules_small_n(db_conn):
     """Seeded sanity: agent ATE >= rules ATE. Report honestly if it regresses."""
     pytest.importorskip("lightgbm")
     from magenta.graph.ablation import run_ladder
 
     def deps_factory(n, seed):
         # build real deps; requires trained models present (labs 3-5 artifacts).
-        import sqlite3
-
         from magenta.brain.bandit import ThompsonBandit
         from magenta.brain.features import FEATURE_NAMES
         from magenta.brain.risk import RiskModel
@@ -58,9 +56,7 @@ def test_ladder_ordering_agent_ge_rules_small_n():
         from magenta.sim.population import generate_population
 
         customers, hidden = generate_population(n=n, seed=seed)
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        init_graph_tables(conn)
+        init_graph_tables(db_conn)
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
 
         class _Chat:
@@ -82,7 +78,7 @@ def test_ladder_ordering_agent_ge_rules_small_n():
             risk=RiskModel.load(), uplift=UpliftModel.load(),
             bandit=bandit, catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
             oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
-            conn=conn, params=_P(), chat=_Chat(), load_customer=lambda cid: None)
+            conn=db_conn, params=_P(), chat=_Chat(), load_customer=lambda cid: None)
 
     ladder = run_ladder(n=1500, seed=7, deps_factory=deps_factory)
     # NOT a hard "agent beats rules" assertion: the project's own honesty

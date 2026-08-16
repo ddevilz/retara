@@ -1,5 +1,3 @@
-import sqlite3
-
 import numpy as np
 import pytest
 
@@ -52,15 +50,14 @@ def test_posterior_mean_matches_theta_mean_and_is_deterministic():
     assert first == second  # deterministic, unlike select()'s TS draw
 
 
-def test_save_load_roundtrip():
+def test_save_load_roundtrip(db_conn):
     arms = [Arm.NO_ACTION, Arm.BILL_CREDIT]
     b = ThompsonBandit(dim=2, arms=arms)
     x = np.array([1.0, 1.0])
     b.update(x, Arm.BILL_CREDIT, 5.0)
-    conn = sqlite3.connect(":memory:")
-    b.save(conn)
+    b.save(db_conn)
     b2 = ThompsonBandit(dim=2, arms=arms)
-    b2.load(conn)
+    b2.load(db_conn)
     # posteriors identical -> same mean estimate.
     m1 = b._theta_mean(Arm.BILL_CREDIT)
     m2 = b2._theta_mean(Arm.BILL_CREDIT)

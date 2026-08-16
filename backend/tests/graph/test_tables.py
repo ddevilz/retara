@@ -1,6 +1,5 @@
-import sqlite3
-
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from magenta.graph.tables import (
     contacts_since,
@@ -12,11 +11,9 @@ from magenta.graph.tables import (
 
 
 @pytest.fixture
-def conn():
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    init_graph_tables(c)
-    return c
+def conn(db_conn):
+    init_graph_tables(db_conn)
+    return db_conn
 
 
 def test_init_is_idempotent(conn):
@@ -53,19 +50,17 @@ def test_fulfillment_is_idempotent_on_key(conn):
     assert n == 1
 
 
-def test_works_without_row_factory():
-    """Plain-tuple connections (stdlib default) must not crash the ledger."""
-    conn = sqlite3.connect(":memory:")  # NO row_factory set
-    init_graph_tables(conn)
-    row = insert_fulfillment(conn, "K-plain", "C1", "CAMP", "BILL_CREDIT", 8.0, "FULFILLED")
+def test_works_without_row_factory(db_conn):
+    """Row-mapping access must work off the shared connection with no extra setup."""
+    init_graph_tables(db_conn)
+    row = insert_fulfillment(db_conn, "K-plain", "C1", "CAMP", "BILL_CREDIT", 8.0, "FULFILLED")
     assert row["IDEMPOTENCY_KEY"] == "K-plain" and row["COST"] == 8.0
-    again = fulfillment_for(conn, "K-plain")
+    again = fulfillment_for(db_conn, "K-plain")
     assert again == row
 
 
-def test_non_duplicate_integrity_error_raises():
+def test_non_duplicate_integrity_error_raises(db_conn):
     """A NOT NULL violation must raise, not silently return None."""
-    conn = sqlite3.connect(":memory:")
-    init_graph_tables(conn)
-    with pytest.raises(sqlite3.IntegrityError):
-        insert_fulfillment(conn, "K-bad", None, "CAMP", "BILL_CREDIT", 8.0, "FULFILLED")
+    init_graph_tables(db_conn)
+    with pytest.raises(IntegrityError):
+        insert_fulfillment(db_conn, "K-bad", None, "CAMP", "BILL_CREDIT", 8.0, "FULFILLED")

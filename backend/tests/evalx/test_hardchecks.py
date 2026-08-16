@@ -13,16 +13,17 @@ graph node tests:
 4. no hidden leak       -- L1 latent fields never survive serialization of
                            graph/dialogue state.
 
-No network, no live model artifacts: :memory: sqlite conns / fresh tmp-path
-DBs only, and the node exercised here (act) never touches the chat/LLM
-client, so nothing needs stubbing. Run with `uv run pytest -m hardcheck`.
+No network, no live model artifacts: the shared `db_conn` Postgres fixture
+only (transaction rolled back after each test), and the node exercised here
+(act) never touches the chat/LLM client, so nothing needs stubbing. Run with
+`uv run pytest -m hardcheck`.
 """
 from __future__ import annotations
 
 import json
-import sqlite3
 
 import pytest
+from sqlalchemy.engine import Connection
 
 from magenta.chat.state import DialogueState
 from magenta.evalx.hardchecks import (
@@ -62,9 +63,7 @@ class _FakeCatalog:
         return 0.0
 
 
-def _mem_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _mem_conn(conn: Connection) -> Connection:
     init_graph_tables(conn)
     return conn
 
@@ -101,8 +100,8 @@ def _insert_audit_row(conn, node: str, customer_id: str, payload: dict) -> None:
 ## 1. idempotency replay
 ## --------------------------------------------------------------------------- #
 @pytest.mark.hardcheck
-def test_replay_idempotent_after_double_act_invoke():
-    conn = _mem_conn()
+def test_replay_idempotent_after_double_act_invoke(db_conn):
+    conn = _mem_conn(db_conn)
     customer = _FakeCustomer()
     deps = _Deps(load_customer=lambda cid: customer, catalog=_FakeCatalog(), conn=conn)
     s = _act_state(customer)
@@ -113,8 +112,8 @@ def test_replay_idempotent_after_double_act_invoke():
 
 
 @pytest.mark.hardcheck
-def test_replay_idempotent_detects_duplicate_rows():
-    conn = _mem_conn()
+def test_replay_idempotent_detects_duplicate_rows(db_conn):
+    conn = _mem_conn(db_conn)
     _insert_fulfillment_row(conn, "K1", "C-DUP")
     _insert_fulfillment_row(conn, "K2", "C-DUP")  # simulates a broken dedupe
     conn.commit()
@@ -122,27 +121,23 @@ def test_replay_idempotent_detects_duplicate_rows():
 
 
 @pytest.mark.hardcheck
-def test_replay_idempotent_vacuously_true_on_empty_conn(tmp_path):
-    from magenta.db import get_conn
-
-    conn = get_conn(str(tmp_path / "r.db"))
-    assert replay_idempotent(conn, "NOBODY") is True
+def test_replay_idempotent_vacuously_true_on_empty_conn(db_conn):
+    # FULFILLMENTS already exists via the Alembic migration and db_conn starts
+    # each test with an empty, rolled-back transaction -- no init needed.
+    assert replay_idempotent(db_conn, "NOBODY") is True
 
 
 ## --------------------------------------------------------------------------- #
 ## 2. holdout purity: FULFILLMENTS vs. the audit trail's own SHADOW record
 ## --------------------------------------------------------------------------- #
 @pytest.mark.hardcheck
-def test_holdout_purity_clean_conn(tmp_path):
-    from magenta.db import get_conn
-
-    conn = get_conn(str(tmp_path / "t.db"))
-    assert scan_holdout_purity(conn) == []
+def test_holdout_purity_clean_conn(db_conn):
+    assert scan_holdout_purity(db_conn) == []
 
 
 @pytest.mark.hardcheck
-def test_holdout_purity_clean_when_shadow_and_fulfilled_are_disjoint():
-    conn = _mem_conn()
+def test_holdout_purity_clean_when_shadow_and_fulfilled_are_disjoint(db_conn):
+    conn = _mem_conn(db_conn)
     _insert_fulfillment_row(conn, "K1", "C-REAL")
     _insert_audit_row(conn, "ACT", "C-REAL", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
     _insert_audit_row(conn, "ACT", "C-HOLDOUT", {"status": "SHADOW", "arm": "BILL_CREDIT"})
@@ -151,8 +146,8 @@ def test_holdout_purity_clean_when_shadow_and_fulfilled_are_disjoint():
 
 
 @pytest.mark.hardcheck
-def test_holdout_purity_detects_violation():
-    conn = _mem_conn()
+def test_holdout_purity_detects_violation(db_conn):
+    conn = _mem_conn(db_conn)
     # C-LEAK has BOTH a real FULFILLMENTS row AND a SHADOW (holdout) audit
     # entry -- the two signals the graph's act() node keeps mutually
     # exclusive by construction. Their agreement is the purity violation.
@@ -166,16 +161,13 @@ def test_holdout_purity_detects_violation():
 ## 3. guardrail compliance: every real fulfillment has a PASS/NEEDS_APPROVAL
 ## --------------------------------------------------------------------------- #
 @pytest.mark.hardcheck
-def test_guardrail_compliance_clean_conn(tmp_path):
-    from magenta.db import get_conn
-
-    conn = get_conn(str(tmp_path / "g.db"))
-    assert scan_guardrail_compliance(conn) == []
+def test_guardrail_compliance_clean_conn(db_conn):
+    assert scan_guardrail_compliance(db_conn) == []
 
 
 @pytest.mark.hardcheck
-def test_guardrail_compliance_clean_when_verdict_present():
-    conn = _mem_conn()
+def test_guardrail_compliance_clean_when_verdict_present(db_conn):
+    conn = _mem_conn(db_conn)
     _insert_audit_row(conn, "GUARDRAIL", "C-OK", {"decision": "PASS", "failed_policies": []})
     _insert_audit_row(conn, "ACT", "C-OK", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
     conn.commit()
@@ -183,8 +175,8 @@ def test_guardrail_compliance_clean_when_verdict_present():
 
 
 @pytest.mark.hardcheck
-def test_guardrail_compliance_detects_violation():
-    conn = _mem_conn()
+def test_guardrail_compliance_detects_violation(db_conn):
+    conn = _mem_conn(db_conn)
     # C-NOGATE was fulfilled but never has a PASS/NEEDS_APPROVAL GUARDRAIL entry.
     _insert_audit_row(conn, "ACT", "C-NOGATE", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
     conn.commit()

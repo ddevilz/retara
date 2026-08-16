@@ -1,5 +1,3 @@
-import sqlite3
-
 from magenta.brain.risk import Band, RiskAssessment
 from magenta.graph.ablation import RUNGS, make_policy
 from magenta.graph.build import GraphDeps
@@ -64,20 +62,18 @@ def _real_deps(customer, fakes, spy_chat, conn):
     )
 
 
-def _conn():
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    init_graph_tables(c)
-    return c
+def _conn(conn):
+    init_graph_tables(conn)
+    return conn
 
 
-def test_agent_s1_is_agent_policy_with_system2_disabled(customer, fakes, spy_chat):
-    pol = make_policy("agent_s1", _real_deps(customer, fakes, spy_chat, _conn()))
+def test_agent_s1_is_agent_policy_with_system2_disabled(customer, fakes, spy_chat, db_conn):
+    pol = make_policy("agent_s1", _real_deps(customer, fakes, spy_chat, _conn(db_conn)))
     assert isinstance(pol, AgentPolicy)
     assert pol.deps.system2_enabled is False
 
 
-def test_agent_is_agent_policy_with_system2_enabled(customer, fakes, spy_chat):
-    pol = make_policy("agent", _real_deps(customer, fakes, spy_chat, _conn()))
+def test_agent_is_agent_policy_with_system2_enabled(customer, fakes, spy_chat, db_conn):
+    pol = make_policy("agent", _real_deps(customer, fakes, spy_chat, _conn(db_conn)))
     assert isinstance(pol, AgentPolicy)
     assert pol.deps.system2_enabled is True

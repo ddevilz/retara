@@ -1,5 +1,3 @@
-import sqlite3
-
 import pytest
 
 from magenta.brain.risk import Band, Driver
@@ -29,9 +27,7 @@ def _embedder():
     return LocalEmbedder()
 
 
-def _cache(embedder, threshold: float = 0.75):
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _cache(conn, embedder, threshold: float = 0.75):
     return SemanticCache(conn, embedder, threshold=threshold)
 
 
@@ -43,7 +39,7 @@ def test_signature_stable_and_shape_sensitive():
     assert a != c
 
 
-def test_cache_hit_one_call_for_identical_signatures(monkeypatch, _embedder):
+def test_cache_hit_one_call_for_identical_signatures(monkeypatch, _embedder, db_conn):
     """Task 13.4: byte-identical driver shape -> SemanticCache exact match
     (cosine 1.0) -> only the first customer pays for a real LLM call."""
     calls = []
@@ -51,12 +47,12 @@ def test_cache_hit_one_call_for_identical_signatures(monkeypatch, _embedder):
                         lambda role, msgs: (calls.append(role), "BILL_SHOCK")[1])
     customers = [C("CUST-1"), C("CUST-2")]
     reports = {"CUST-1": _report(shap=0.3), "CUST-2": _report(shap=0.7)}  # same sig
-    out = diagnose_cohort(customers, reports, deps=object(), cache=_cache(_embedder))
+    out = diagnose_cohort(customers, reports, deps=object(), cache=_cache(db_conn, _embedder))
     assert set(out) == {"CUST-1", "CUST-2"}
     assert len(calls) == 1     # semantic cache: identical driver shape => 1 LLM call
 
 
-def test_near_duplicate_driver_shape_also_collapses(monkeypatch, _embedder):
+def test_near_duplicate_driver_shape_also_collapses(monkeypatch, _embedder, db_conn):
     """The semantic upgrade over an exact-hash cache: a customer whose report
     adds one minor secondary driver (different driver_signature, but a
     near-duplicate diagnosis text) still reuses the cached answer."""
@@ -67,7 +63,7 @@ def test_near_duplicate_driver_shape_also_collapses(monkeypatch, _embedder):
     customers = [C("CUST-1"), C("CUST-2")]
     reports = {"CUST-1": _report(), "CUST-2": _report(extra_driver=extra)}
     assert driver_signature(reports["CUST-1"]) != driver_signature(reports["CUST-2"])
-    diagnose_cohort(customers, reports, deps=object(), cache=_cache(_embedder))
+    diagnose_cohort(customers, reports, deps=object(), cache=_cache(db_conn, _embedder))
     assert len(calls) == 1
 
 

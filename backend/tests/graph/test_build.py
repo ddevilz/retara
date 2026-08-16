@@ -1,5 +1,3 @@
-import sqlite3
-
 import pytest
 
 from magenta.brain.uplift import Segment
@@ -14,11 +12,9 @@ class Params:
     value_cap = 40.0
 
 
-def _conn():
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    init_graph_tables(c)
-    return c
+def _conn(db_conn):
+    init_graph_tables(db_conn)
+    return db_conn
 
 
 def _init_state(customer, holdout=False):
@@ -40,10 +36,10 @@ def _deps(customer, fakes, spy_chat, conn):
     )
 
 
-def test_happy_path_persuadable_fulfilled(customer, fakes, spy_chat, monkeypatch):
+def test_happy_path_persuadable_fulfilled(customer, fakes, spy_chat, monkeypatch, db_conn):
     import magenta.graph.nodes as nm
     monkeypatch.setattr(nm, "featurize", lambda c: [0.0])
-    conn = _conn()
+    conn = _conn(db_conn)
     g = build_graph(_deps(customer, fakes, spy_chat, conn))
     final = g.invoke(_init_state(customer),
                      config={"configurable": {"thread_id": "CUST-1:CAMP-A"}})
@@ -53,10 +49,10 @@ def test_happy_path_persuadable_fulfilled(customer, fakes, spy_chat, monkeypatch
     assert len(spy_chat.calls) == 1
 
 
-def test_non_engage_exits_early_no_llm(customer, fakes, spy_chat, monkeypatch):
+def test_non_engage_exits_early_no_llm(customer, fakes, spy_chat, monkeypatch, db_conn):
     import magenta.graph.nodes as nm
     monkeypatch.setattr(nm, "classify_segment", lambda p, t: Segment.SURE_THING)
-    conn = _conn()
+    conn = _conn(db_conn)
     g = build_graph(_deps(customer, fakes, spy_chat, conn))
     final = g.invoke(_init_state(customer),
                      config={"configurable": {"thread_id": "CUST-1:CAMP-A"}})
@@ -66,12 +62,12 @@ def test_non_engage_exits_early_no_llm(customer, fakes, spy_chat, monkeypatch):
     assert len(spy_chat.calls) == 0   # cost firewall: no LLM on non-engage
 
 
-def test_guardrail_reject_stops_before_act(customer, fakes, spy_chat, monkeypatch):
+def test_guardrail_reject_stops_before_act(customer, fakes, spy_chat, monkeypatch, db_conn):
     import magenta.graph.nodes as nm
     monkeypatch.setattr(nm, "featurize", lambda c: [0.0])
     fakes["catalog"]._min_margin = 5.0
     fakes["catalog"]._cost = 20.0      # margin 22-20=2 < 5 => REJECT MIN_MARGIN
-    conn = _conn()
+    conn = _conn(db_conn)
     g = build_graph(_deps(customer, fakes, spy_chat, conn))
     final = g.invoke(_init_state(customer),
                      config={"configurable": {"thread_id": "CUST-1:CAMP-A"}})
@@ -81,10 +77,10 @@ def test_guardrail_reject_stops_before_act(customer, fakes, spy_chat, monkeypatc
     assert n == 0
 
 
-def test_holdout_shadow_no_fulfill_row_audit_present(customer, fakes, spy_chat, monkeypatch):
+def test_holdout_shadow_no_fulfill_row_audit_present(customer, fakes, spy_chat, monkeypatch, db_conn):
     import magenta.graph.nodes as nm
     monkeypatch.setattr(nm, "featurize", lambda c: [0.0])
-    conn = _conn()
+    conn = _conn(db_conn)
     g = build_graph(_deps(customer, fakes, spy_chat, conn))
     final = g.invoke(_init_state(customer, holdout=True),
                      config={"configurable": {"thread_id": "CUST-1:CAMP-A"}})
@@ -95,10 +91,10 @@ def test_holdout_shadow_no_fulfill_row_audit_present(customer, fakes, spy_chat, 
     assert "ACT" in nodes and "OUTCOME" in nodes
 
 
-def test_idempotent_replay_one_row(customer, fakes, spy_chat, monkeypatch):
+def test_idempotent_replay_one_row(customer, fakes, spy_chat, monkeypatch, db_conn):
     import magenta.graph.nodes as nm
     monkeypatch.setattr(nm, "featurize", lambda c: [0.0])
-    conn = _conn()
+    conn = _conn(db_conn)
     g = build_graph(_deps(customer, fakes, spy_chat, conn))
     cfg = {"configurable": {"thread_id": "CUST-1:CAMP-A"}}
     g.invoke(_init_state(customer), config=cfg)
@@ -107,10 +103,10 @@ def test_idempotent_replay_one_row(customer, fakes, spy_chat, monkeypatch):
     assert n == 1
 
 
-def test_no_hidden_leak_across_full_invoke(customer, fakes, spy_chat, monkeypatch):
+def test_no_hidden_leak_across_full_invoke(customer, fakes, spy_chat, monkeypatch, db_conn):
     import magenta.graph.nodes as nm
     monkeypatch.setattr(nm, "featurize", lambda c: [0.0])
-    conn = _conn()
+    conn = _conn(db_conn)
     g = build_graph(_deps(customer, fakes, spy_chat, conn))
     g.invoke(_init_state(customer),
              config={"configurable": {"thread_id": "CUST-1:CAMP-A"}})

@@ -3,8 +3,6 @@ GraphDeps, not the loose per-test fakes in tests/graph/conftest.py, so
 outcome()'s real featurize() call on a real Customer doesn't blow up)."""
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 
 from magenta.graph.build import GraphDeps
@@ -13,7 +11,7 @@ from magenta.memory.store import CustomerMemory
 from magenta.offers import Arm, OfferDecision
 from magenta.sim.oracle import Outcome
 from magenta.sim.population import generate_population
-from tests.db_fixtures import migrated_db  # noqa: F401
+from tests.db_fixtures import TENANT_A, TENANT_B, db_conn, migrated_db  # noqa: F401
 
 
 class _SpyChat:
@@ -69,32 +67,36 @@ class _Params:
 
 
 @pytest.fixture
-def mem_deps_factory():
-    """Factory building a real GraphDeps wired with an in-memory
-    CustomerMemory (no embedder -- outcome()/diagnose() only need
-    add_edge/consolidate/timeline, not semantic_recall), a spy chat, a fake
-    oracle/bandit, and a fixed OfferDecision at `deps._offer_fixture`.
+def mem_deps_factory(db_conn):  # noqa: F811 -- shadows the module-level fixture import by design
+    """Factory building a real GraphDeps wired with a CustomerMemory (no
+    embedder -- outcome()/diagnose() only need add_edge/consolidate/timeline,
+    not semantic_recall), a spy chat, a fake oracle/bandit, and a fixed
+    OfferDecision at `deps._offer_fixture`.
+
+    Both the memory store and the graph connection are the SAME shared
+    Postgres `db_conn` now -- they were two separate in-process SQLite
+    databases before, which no longer makes sense with one real database.
 
     `load_customer` returns a REAL Customer (from generate_population) so
     outcome()'s real featurize() call doesn't AttributeError on a hand-rolled
     stub missing raw fields (total_charges, data_gb_used_p50, ...).
+
+    NOTE: `CustomerMemory` does not accept `tenant_id` until Task 6 -- this
+    factory is written in its final form now (single-arg constructor) and its
+    dependent tests are expected to fail until `memory/store.py` is ported to
+    Postgres (Task 6), because `init_tables()` still emits SQLite DDL.
     """
 
     def _make(**overrides):
         customers, _ = generate_population(1, seed=0)
         customer = customers[0]
 
-        mem_conn = sqlite3.connect(":memory:")
-        mem_conn.row_factory = sqlite3.Row
-        memory = CustomerMemory(mem_conn)
+        memory = CustomerMemory(db_conn)
         memory.init_tables()
-
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
 
         deps = GraphDeps(
             risk=None, uplift=None, bandit=_FakeBandit(), catalog=None,
-            oracle=_FakeOracle(), conn=conn, params=_Params(), chat=_SpyChat(),
+            oracle=_FakeOracle(), conn=db_conn, params=_Params(), chat=_SpyChat(),
             load_customer=lambda cid: customer, memory=memory,
         )
         deps._offer_fixture = OfferDecision(
