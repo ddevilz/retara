@@ -19,3 +19,22 @@ def test_get_conn_executes_against_postgres():
 
 def test_engine_is_postgres_not_sqlite():
     assert get_engine().dialect.name == "postgresql"
+
+
+def test_committed_write_does_not_leak_out_of_a_test(db_conn):
+    """A commit INSIDE a test must not survive teardown. This is the regression guard
+    for the fixture that previously claimed rollback isolation and did not have it."""
+    db_conn.execute(text(
+        'INSERT INTO "GUARDRAIL_CONTACTS" ("TENANT_ID", "CUSTOMER_ID", "CAMPAIGN_ID", "CONTACTED_AT") '
+        "VALUES (:t, :c, :k, now())"
+    ), {"t": "org_leak_probe", "c": "CUST-LEAK", "k": "CAMP-LEAK"})
+    db_conn.commit()   # the exact thing the old fixture could not undo
+    assert db_conn.execute(text(
+        'SELECT count(*) FROM "GUARDRAIL_CONTACTS" WHERE "TENANT_ID" = :t'
+    ), {"t": "org_leak_probe"}).scalar_one() == 1
+
+
+def test_previous_tests_committed_rows_are_gone(db_conn):
+    assert db_conn.execute(text(
+        'SELECT count(*) FROM "GUARDRAIL_CONTACTS" WHERE "TENANT_ID" = :t'
+    ), {"t": "org_leak_probe"}).scalar_one() == 0
