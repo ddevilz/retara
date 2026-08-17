@@ -20,10 +20,12 @@ seeded synthetic batch and reports the two rates as a deterministic number.
 """
 from __future__ import annotations
 
-import sqlite3
+import uuid
 
 import numpy as np
+from sqlalchemy import text
 
+from magenta.db import get_conn
 from magenta.memory.embed import LocalEmbedder
 from magenta.memory.store import CustomerMemory
 
@@ -39,34 +41,50 @@ _QUERY = "what plan is the customer on right now?"
 
 def run_memory_eval(n: int = 50, seed: int = 7) -> str:
     rng = np.random.default_rng(seed)
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    mem = CustomerMemory(conn, embedder=LocalEmbedder())
-    mem.init_tables()
 
-    temporal_correct = 0
-    conflict_resolved = 0
-    for i in range(n):
-        cid = f"EVAL-{i}"
-        old_plan, new_plan = _PLAN_PAIRS[int(rng.integers(len(_PLAN_PAIRS)))]
-        old_date = f"2026-{int(rng.integers(1, 6)):02d}-01"
-        new_date = f"2026-{int(rng.integers(6, 12)):02d}-01"
+    # Table is real Postgres now (persists across runs), unlike the old
+    # per-call :memory: SQLite db -- run under a throwaway tenant so
+    # eval writes never accumulate in real tenant data, and clean it up
+    # in `finally` below.
+    eval_tenant = f"eval-{uuid.uuid4().hex[:8]}"
 
-        mem.consolidate(cid, "customer", "PLAN_IS", old_plan, old_date)
-        mem.consolidate(cid, "customer", "PLAN_IS", new_plan, new_date)
+    # `with get_conn() as conn:` guarantees the pooled connection is
+    # returned even on exception. CustomerMemory.add_edge commits
+    # internally, so a rollback-based cleanup on an unclosed connection
+    # would not undo anything -- an explicit close (and explicit DELETE
+    # below) is the only way to avoid leaving the connection idle in
+    # transaction (which deadlocks a later TRUNCATE) and leaving eval
+    # rows behind in MEMORY_EDGES.
+    with get_conn() as conn:
+        mem = CustomerMemory(conn, eval_tenant, embedder=LocalEmbedder())
+        try:
+            temporal_correct = 0
+            conflict_resolved = 0
+            for i in range(n):
+                cid = f"EVAL-{i}"
+                old_plan, new_plan = _PLAN_PAIRS[int(rng.integers(len(_PLAN_PAIRS)))]
+                old_date = f"2026-{int(rng.integers(1, 6)):02d}-01"
+                new_date = f"2026-{int(rng.integers(6, 12)):02d}-01"
 
-        # recall + consolidation together: pull related edges semantically,
-        # then trust ONLY the currently-open one for a temporal answer.
-        recalled = mem.semantic_recall(cid, _QUERY, k=5)
-        current_candidates = [e for e in recalled if e.valid_to is None]
-        if current_candidates and current_candidates[0].object == new_plan:
-            temporal_correct += 1
+                mem.consolidate(cid, "customer", "PLAN_IS", old_plan, old_date)
+                mem.consolidate(cid, "customer", "PLAN_IS", new_plan, new_date)
 
-        # consolidation in isolation: did the stale edge get closed correctly?
-        timeline = mem.timeline(cid)
-        closed = [e for e in timeline if e.relation == "PLAN_IS" and e.valid_to is not None]
-        if len(closed) == 1 and closed[0].object == old_plan and closed[0].valid_to == new_date:
-            conflict_resolved += 1
+                # recall + consolidation together: pull related edges semantically,
+                # then trust ONLY the currently-open one for a temporal answer.
+                recalled = mem.semantic_recall(cid, _QUERY, k=5)
+                current_candidates = [e for e in recalled if e.valid_to is None]
+                if current_candidates and current_candidates[0].object == new_plan:
+                    temporal_correct += 1
+
+                # consolidation in isolation: did the stale edge get closed correctly?
+                timeline = mem.timeline(cid)
+                closed = [e for e in timeline if e.relation == "PLAN_IS" and e.valid_to is not None]
+                if (len(closed) == 1 and closed[0].object == old_plan
+                        and closed[0].valid_to.startswith(new_date)):
+                    conflict_resolved += 1
+        finally:
+            conn.execute(text('DELETE FROM "MEMORY_EDGES" WHERE "TENANT_ID" = :t'), {"t": eval_tenant})
+            conn.commit()
 
     temporal_accuracy = temporal_correct / n
     consolidation_conflict_resolution_rate = conflict_resolved / n

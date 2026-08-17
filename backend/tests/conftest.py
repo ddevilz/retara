@@ -81,18 +81,15 @@ def mem_deps_factory(db_conn):  # noqa: F811 -- shadows the module-level fixture
     outcome()'s real featurize() call doesn't AttributeError on a hand-rolled
     stub missing raw fields (total_charges, data_gb_used_p50, ...).
 
-    NOTE: `CustomerMemory` does not accept `tenant_id` until Task 6 -- this
-    factory is written in its final form now (single-arg constructor) and its
-    dependent tests are expected to fail until `memory/store.py` is ported to
-    Postgres (Task 6), because `init_tables()` still emits SQLite DDL.
+    `CustomerMemory` is tenant-scoped (Task 6) -- constructed with `TENANT_A`
+    here, matching `db_conn`'s tenant-truncated Postgres fixture.
     """
 
     def _make(**overrides):
         customers, _ = generate_population(1, seed=0)
         customer = customers[0]
 
-        memory = CustomerMemory(db_conn)
-        memory.init_tables()
+        memory = CustomerMemory(db_conn, TENANT_A)
 
         deps = GraphDeps(
             risk=None, uplift=None, bandit=_FakeBandit(), catalog=None,
