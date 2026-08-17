@@ -647,8 +647,8 @@ def eval_report(
         mark = "PASS" if r.passed else "FAIL"
         typer.echo(f"  [{mark}] {r.name}: {r.detail}")
 
-    holdout_viol = scan_holdout_purity(conn)
-    guardrail_viol = scan_guardrail_compliance(conn)
+    holdout_viol = scan_holdout_purity(conn, DEFAULT_TENANT_ID)
+    guardrail_viol = scan_guardrail_compliance(conn, DEFAULT_TENANT_ID)
     typer.echo("\n=== Hard checks ===")
     typer.echo(f"  holdout_purity: {'PASS' if not holdout_viol else 'FAIL ' + str(holdout_viol)}")
     typer.echo(f"  guardrail_compliance: "

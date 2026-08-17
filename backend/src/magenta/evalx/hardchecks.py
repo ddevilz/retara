@@ -30,11 +30,18 @@ status/decision the corresponding node actually writes (see
 `magenta.graph.nodes._audit`, `.act`, `.guardrail`). The scan LOGIC (a
 violation = fulfilled-but-holdout, or fulfilled-without-PASS) is unchanged
 from the brief -- only the column/table plumbing is adapted.
+
+Postgres note: both FULFILLMENTS and AUDIT_LOG have TENANT_ID as part of
+their primary key / a required column (Alembic 0001_baseline_schema). Every
+scan below takes tenant_id and scopes its query to it -- an unscoped scan
+would silently mix rows from every tenant into one compliance verdict.
 """
 from __future__ import annotations
 
 import json
-import sqlite3
+
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 ## Hidden L1 field names that must NEVER appear in graph/dialogue state or
 ## prompts. Mirrors CLAUDE.md's anti-circularity list, magenta.sim.population's
@@ -61,35 +68,43 @@ def scan_hidden_leak(state_obj) -> list[str]:
     return sorted(f for f in _HIDDEN_FIELDS if f.lower() in blob)
 
 
-def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
-    return cur.fetchone() is not None
+def _table_exists(conn: Connection, name: str) -> bool:
+    """sqlite_master does not exist on Postgres -- information_schema.tables
+    is the portable catalogue. Not tenant-scoped: table existence is a schema
+    fact, not tenant data."""
+    return conn.execute(
+        text(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = :name"
+        ),
+        {"name": name},
+    ).first() is not None
 
 
-def _payloads_for_node(conn: sqlite3.Connection, node: str) -> list[tuple[str, dict]]:
-    """[(customer_id, payload_dict), ...] for every AUDIT_LOG row of that NODE.
-
-    Malformed/missing PAYLOAD is skipped rather than raising -- a compliance
-    scan must never crash on the very audit trail it's auditing.
+def _payloads_for_node(conn: Connection, tenant_id: str, node: str) -> list[tuple[str, dict]]:
+    """[(customer_id, payload_dict), ...] for every AUDIT_LOG row of that NODE,
+    scoped to tenant_id. PAYLOAD is JSONB -- psycopg returns a dict, no
+    json.loads needed. Malformed/non-dict PAYLOAD is skipped rather than
+    raising -- a compliance scan must never crash on the very audit trail
+    it's auditing.
     """
     rows = conn.execute(
-        "SELECT CUSTOMER_ID, PAYLOAD FROM AUDIT_LOG WHERE NODE = ?", (node,)
-    ).fetchall()
+        text(
+            'SELECT "CUSTOMER_ID", "PAYLOAD" FROM "AUDIT_LOG" '
+            'WHERE "TENANT_ID" = :tenant_id AND "NODE" = :node'
+        ),
+        {"tenant_id": tenant_id, "node": node},
+    ).all()
     out: list[tuple[str, dict]] = []
     for cid, payload in rows:
-        try:
-            data = json.loads(payload)
-        except (TypeError, ValueError):
-            continue
-        if isinstance(data, dict):
-            out.append((cid, data))
+        if isinstance(payload, dict):
+            out.append((cid, payload))
     return out
 
 
-def scan_holdout_purity(conn: sqlite3.Connection) -> list[str]:
+def scan_holdout_purity(conn: Connection, tenant_id: str) -> list[str]:
     """customer_ids present in FULFILLMENTS that the audit trail ALSO recorded
-    as holdout (an ACT-node SHADOW entry).
+    as holdout (an ACT-node SHADOW entry), scoped to tenant_id.
 
     These two signals are mutually exclusive by construction in
     `graph.nodes.act`: a holdout customer_id gets a SHADOW audit entry and NO
@@ -100,42 +115,48 @@ def scan_holdout_purity(conn: sqlite3.Connection) -> list[str]:
     """
     if not _table_exists(conn, "FULFILLMENTS") or not _table_exists(conn, "AUDIT_LOG"):
         return []
-    fulfilled_ids = {
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT CUSTOMER_ID FROM FULFILLMENTS").fetchall()
-    }
+    fulfilled_ids = set(
+        conn.execute(
+            text(
+                'SELECT DISTINCT "CUSTOMER_ID" FROM "FULFILLMENTS" '
+                'WHERE "TENANT_ID" = :tenant_id'
+            ),
+            {"tenant_id": tenant_id},
+        ).scalars().all()
+    )
     if not fulfilled_ids:
         return []
     shadow_ids = {
-        cid for cid, payload in _payloads_for_node(conn, "ACT")
+        cid for cid, payload in _payloads_for_node(conn, tenant_id, "ACT")
         if payload.get("status") == "SHADOW"
     }
     return sorted(fulfilled_ids & shadow_ids)
 
 
-def scan_guardrail_compliance(conn: sqlite3.Connection) -> list[str]:
+def scan_guardrail_compliance(conn: Connection, tenant_id: str) -> list[str]:
     """customer_ids with a real fulfillment (AUDIT_LOG ACT status FULFILLED or
     IDEMPOTENT_HIT) but no matching PASS/NEEDS_APPROVAL GUARDRAIL verdict for
-    that customer -- i.e. a fulfillment that bypassed (or outran) the
-    compliance gate. Empty conn / missing table => vacuously compliant.
+    that customer, scoped to tenant_id -- i.e. a fulfillment that bypassed (or
+    outran) the compliance gate. Empty conn / missing table => vacuously
+    compliant.
     """
     if not _table_exists(conn, "AUDIT_LOG"):
         return []
     fulfilled_ids = {
-        cid for cid, payload in _payloads_for_node(conn, "ACT")
+        cid for cid, payload in _payloads_for_node(conn, tenant_id, "ACT")
         if payload.get("status") in _FULFILLED_STATUSES
     }
     if not fulfilled_ids:
         return []
     approved_ids = {
-        cid for cid, payload in _payloads_for_node(conn, "GUARDRAIL")
+        cid for cid, payload in _payloads_for_node(conn, tenant_id, "GUARDRAIL")
         if payload.get("decision") in _APPROVED_DECISIONS
     }
     return sorted(fulfilled_ids - approved_ids)
 
 
-def replay_idempotent(conn: sqlite3.Connection, customer_id: str) -> bool:
-    """True iff FULFILLMENTS holds at most one row for customer_id.
+def replay_idempotent(conn: Connection, tenant_id: str, customer_id: str) -> bool:
+    """True iff FULFILLMENTS holds at most one row for (tenant_id, customer_id).
 
     This is the invariant `graph.nodes.act`'s insert-or-return (keyed on
     IDEMPOTENCY_KEY) is supposed to guarantee even when Act re-runs after an
@@ -147,6 +168,10 @@ def replay_idempotent(conn: sqlite3.Connection, customer_id: str) -> bool:
     if not _table_exists(conn, "FULFILLMENTS"):
         return True
     n = conn.execute(
-        "SELECT COUNT(*) FROM FULFILLMENTS WHERE CUSTOMER_ID = ?", (customer_id,)
-    ).fetchone()[0]
+        text(
+            'SELECT COUNT(*) FROM "FULFILLMENTS" '
+            'WHERE "TENANT_ID" = :tenant_id AND "CUSTOMER_ID" = :customer_id'
+        ),
+        {"tenant_id": tenant_id, "customer_id": customer_id},
+    ).scalar_one()
     return n <= 1

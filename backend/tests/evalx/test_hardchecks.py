@@ -14,19 +14,24 @@ graph node tests:
                            graph/dialogue state.
 
 No network, no live model artifacts: the shared `db_conn` Postgres fixture
-only (transaction rolled back after each test), and the node exercised here
-(act) never touches the chat/LLM client, so nothing needs stubbing. Run with
+only (tables truncated after each test), and the node exercised here (act)
+never touches the chat/LLM client, so nothing needs stubbing. Run with
 `uv run pytest -m hardcheck`.
+
+Every scan is tenant-scoped (Alembic 0001_baseline_schema: FULFILLMENTS'
+PK and AUDIT_LOG both carry TENANT_ID) -- tests exercise cross-tenant
+isolation directly, not just the single-tenant happy path.
 """
 from __future__ import annotations
 
 import json
 
 import pytest
-from sqlalchemy.engine import Connection
+from sqlalchemy import text
 
 from magenta.chat.state import DialogueState
 from magenta.evalx.hardchecks import (
+    _table_exists,
     replay_idempotent,
     scan_guardrail_compliance,
     scan_hidden_leak,
@@ -34,8 +39,8 @@ from magenta.evalx.hardchecks import (
 )
 from magenta.graph.nodes import act
 from magenta.graph.state import GuardrailVerdict
-from magenta.graph.tables import init_graph_tables
 from magenta.offers import Arm, OfferDecision
+from tests.db_fixtures import TENANT_A, TENANT_B
 
 
 ## --------------------------------------------------------------------------- #
@@ -63,14 +68,10 @@ class _FakeCatalog:
         return 0.0
 
 
-def _mem_conn(conn: Connection) -> Connection:
-    init_graph_tables(conn)
-    return conn
-
-
-def _act_state(customer) -> dict:
+def _act_state(customer, tenant_id) -> dict:
     return {
         "customer_id": customer.customer_id, "campaign_id": "CAMP-HC",
+        "tenant_id": tenant_id,
         "consent_flags": {"MARKETING": True},
         "risk": None, "diagnosis": None,
         "offer": OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6),
@@ -80,20 +81,57 @@ def _act_state(customer) -> dict:
     }
 
 
-def _insert_fulfillment_row(conn, key: str, customer_id: str) -> None:
+def _insert_fulfillment_row(conn, tenant_id: str, key: str, customer_id: str) -> None:
     conn.execute(
-        "INSERT INTO FULFILLMENTS "
-        "(IDEMPOTENCY_KEY, CUSTOMER_ID, CAMPAIGN_ID, ARM, COST, STATUS) "
-        "VALUES (?, ?, 'CAMP', 'BILL_CREDIT', 8.0, 'FULFILLED')",
-        (key, customer_id),
+        text(
+            'INSERT INTO "FULFILLMENTS" '
+            '("TENANT_ID", "IDEMPOTENCY_KEY", "CUSTOMER_ID", "CAMPAIGN_ID", "ARM", "COST", "STATUS") '
+            "VALUES (:tenant_id, :key, :customer_id, 'CAMP', 'BILL_CREDIT', 8.0, 'FULFILLED')"
+        ),
+        {"tenant_id": tenant_id, "key": key, "customer_id": customer_id},
     )
 
 
-def _insert_audit_row(conn, node: str, customer_id: str, payload: dict) -> None:
+def _insert_audit_row(conn, tenant_id: str, node: str, customer_id: str, payload: dict) -> None:
     conn.execute(
-        "INSERT INTO AUDIT_LOG (NODE, CUSTOMER_ID, TS, PAYLOAD) VALUES (?, ?, ?, ?)",
-        (node, customer_id, "2026-01-01T00:00:00Z", json.dumps(payload)),
+        text(
+            'INSERT INTO "AUDIT_LOG" ("TENANT_ID", "NODE", "CUSTOMER_ID", "TS", "PAYLOAD") '
+            "VALUES (:tenant_id, :node, :customer_id, :ts, CAST(:payload AS jsonb))"
+        ),
+        {"tenant_id": tenant_id, "node": node, "customer_id": customer_id,
+         "ts": "2026-01-01T00:00:00Z", "payload": json.dumps(payload)},
     )
+
+
+## --------------------------------------------------------------------------- #
+## 0. _table_exists -- the information_schema swap-in for sqlite_master
+## --------------------------------------------------------------------------- #
+@pytest.mark.hardcheck
+def test_table_exists_uses_information_schema(db_conn):
+    """sqlite_master does not exist on Postgres."""
+    assert _table_exists(db_conn, "FULFILLMENTS") is True
+    assert _table_exists(db_conn, "NO_SUCH_TABLE") is False
+
+
+@pytest.mark.hardcheck
+def test_missing_table_branch_of_scans(db_conn):
+    """Restores coverage of the `not _table_exists(...)` guard branch.
+
+    Task 3's sweep to the shared Postgres `db_conn` fixture made every table
+    always exist (merely empty), so the "missing table" guards in
+    scan_holdout_purity/scan_guardrail_compliance/replay_idempotent went
+    uncovered. Drop FULFILLMENTS and AUDIT_LOG within this test's connection
+    (never committed -- db_conn truncates+reconnects on teardown, so the drop
+    never escapes this test) to exercise the FALSE branch directly.
+    """
+    db_conn.execute(text('DROP TABLE "FULFILLMENTS"'))
+    db_conn.execute(text('DROP TABLE "AUDIT_LOG"'))
+    assert _table_exists(db_conn, "FULFILLMENTS") is False
+    assert _table_exists(db_conn, "AUDIT_LOG") is False
+
+    assert scan_holdout_purity(db_conn, TENANT_A) == []
+    assert scan_guardrail_compliance(db_conn, TENANT_A) == []
+    assert replay_idempotent(db_conn, TENANT_A, "NOBODY") is True
 
 
 ## --------------------------------------------------------------------------- #
@@ -101,30 +139,45 @@ def _insert_audit_row(conn, node: str, customer_id: str, payload: dict) -> None:
 ## --------------------------------------------------------------------------- #
 @pytest.mark.hardcheck
 def test_replay_idempotent_after_double_act_invoke(db_conn):
-    conn = _mem_conn(db_conn)
     customer = _FakeCustomer()
-    deps = _Deps(load_customer=lambda cid: customer, catalog=_FakeCatalog(), conn=conn)
-    s = _act_state(customer)
+    deps = _Deps(load_customer=lambda cid: customer, catalog=_FakeCatalog(),
+                 conn=db_conn, tenant_id=TENANT_A)
+    s = _act_state(customer, TENANT_A)
     act(s, deps)
     act(s, deps)  # replay: simulates interrupt/resume re-running the node
-    assert conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0] == 1
-    assert replay_idempotent(conn, customer.customer_id) is True
+    db_conn.commit()
+    assert db_conn.execute(
+        text('SELECT count(*) FROM "FULFILLMENTS" WHERE "TENANT_ID" = :t'),
+        {"t": TENANT_A},
+    ).scalar_one() == 1
+    assert replay_idempotent(db_conn, TENANT_A, customer.customer_id) is True
 
 
 @pytest.mark.hardcheck
 def test_replay_idempotent_detects_duplicate_rows(db_conn):
-    conn = _mem_conn(db_conn)
-    _insert_fulfillment_row(conn, "K1", "C-DUP")
-    _insert_fulfillment_row(conn, "K2", "C-DUP")  # simulates a broken dedupe
-    conn.commit()
-    assert replay_idempotent(conn, "C-DUP") is False
+    _insert_fulfillment_row(db_conn, TENANT_A, "K1", "C-DUP")
+    _insert_fulfillment_row(db_conn, TENANT_A, "K2", "C-DUP")  # simulates a broken dedupe
+    db_conn.commit()
+    assert replay_idempotent(db_conn, TENANT_A, "C-DUP") is False
 
 
 @pytest.mark.hardcheck
 def test_replay_idempotent_vacuously_true_on_empty_conn(db_conn):
     # FULFILLMENTS already exists via the Alembic migration and db_conn starts
-    # each test with an empty, rolled-back transaction -- no init needed.
-    assert replay_idempotent(db_conn, "NOBODY") is True
+    # each test with an empty table -- no rows for this tenant, no init needed.
+    assert replay_idempotent(db_conn, TENANT_A, "NOBODY") is True
+
+
+@pytest.mark.hardcheck
+def test_replay_idempotent_is_tenant_scoped(db_conn):
+    """Two tenants can each hold one row under the SAME customer_id without
+    tripping each other's idempotency check -- FULFILLMENTS' PK is
+    (TENANT_ID, IDEMPOTENCY_KEY), not just IDEMPOTENCY_KEY."""
+    _insert_fulfillment_row(db_conn, TENANT_A, "KA", "C-SHARED")
+    _insert_fulfillment_row(db_conn, TENANT_B, "KB", "C-SHARED")
+    db_conn.commit()
+    assert replay_idempotent(db_conn, TENANT_A, "C-SHARED") is True
+    assert replay_idempotent(db_conn, TENANT_B, "C-SHARED") is True
 
 
 ## --------------------------------------------------------------------------- #
@@ -132,29 +185,37 @@ def test_replay_idempotent_vacuously_true_on_empty_conn(db_conn):
 ## --------------------------------------------------------------------------- #
 @pytest.mark.hardcheck
 def test_holdout_purity_clean_conn(db_conn):
-    assert scan_holdout_purity(db_conn) == []
+    assert scan_holdout_purity(db_conn, TENANT_A) == []
 
 
 @pytest.mark.hardcheck
 def test_holdout_purity_clean_when_shadow_and_fulfilled_are_disjoint(db_conn):
-    conn = _mem_conn(db_conn)
-    _insert_fulfillment_row(conn, "K1", "C-REAL")
-    _insert_audit_row(conn, "ACT", "C-REAL", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
-    _insert_audit_row(conn, "ACT", "C-HOLDOUT", {"status": "SHADOW", "arm": "BILL_CREDIT"})
-    conn.commit()
-    assert scan_holdout_purity(conn) == []
+    _insert_fulfillment_row(db_conn, TENANT_A, "K1", "C-REAL")
+    _insert_audit_row(db_conn, TENANT_A, "ACT", "C-REAL", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
+    _insert_audit_row(db_conn, TENANT_A, "ACT", "C-HOLDOUT", {"status": "SHADOW", "arm": "BILL_CREDIT"})
+    db_conn.commit()
+    assert scan_holdout_purity(db_conn, TENANT_A) == []
 
 
 @pytest.mark.hardcheck
 def test_holdout_purity_detects_violation(db_conn):
-    conn = _mem_conn(db_conn)
     # C-LEAK has BOTH a real FULFILLMENTS row AND a SHADOW (holdout) audit
     # entry -- the two signals the graph's act() node keeps mutually
     # exclusive by construction. Their agreement is the purity violation.
-    _insert_fulfillment_row(conn, "K1", "C-LEAK")
-    _insert_audit_row(conn, "ACT", "C-LEAK", {"status": "SHADOW", "arm": "BILL_CREDIT"})
-    conn.commit()
-    assert scan_holdout_purity(conn) == ["C-LEAK"]
+    _insert_fulfillment_row(db_conn, TENANT_A, "K1", "C-LEAK")
+    _insert_audit_row(db_conn, TENANT_A, "ACT", "C-LEAK", {"status": "SHADOW", "arm": "BILL_CREDIT"})
+    db_conn.commit()
+    assert scan_holdout_purity(db_conn, TENANT_A) == ["C-LEAK"]
+
+
+@pytest.mark.hardcheck
+def test_holdout_purity_is_tenant_scoped(db_conn):
+    """A violation in tenant B must never surface in tenant A's scan."""
+    _insert_fulfillment_row(db_conn, TENANT_B, "K1", "C-LEAK")
+    _insert_audit_row(db_conn, TENANT_B, "ACT", "C-LEAK", {"status": "SHADOW", "arm": "BILL_CREDIT"})
+    db_conn.commit()
+    assert scan_holdout_purity(db_conn, TENANT_A) == []
+    assert scan_holdout_purity(db_conn, TENANT_B) == ["C-LEAK"]
 
 
 ## --------------------------------------------------------------------------- #
@@ -162,25 +223,31 @@ def test_holdout_purity_detects_violation(db_conn):
 ## --------------------------------------------------------------------------- #
 @pytest.mark.hardcheck
 def test_guardrail_compliance_clean_conn(db_conn):
-    assert scan_guardrail_compliance(db_conn) == []
+    assert scan_guardrail_compliance(db_conn, TENANT_A) == []
 
 
 @pytest.mark.hardcheck
 def test_guardrail_compliance_clean_when_verdict_present(db_conn):
-    conn = _mem_conn(db_conn)
-    _insert_audit_row(conn, "GUARDRAIL", "C-OK", {"decision": "PASS", "failed_policies": []})
-    _insert_audit_row(conn, "ACT", "C-OK", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
-    conn.commit()
-    assert scan_guardrail_compliance(conn) == []
+    _insert_audit_row(db_conn, TENANT_A, "GUARDRAIL", "C-OK", {"decision": "PASS", "failed_policies": []})
+    _insert_audit_row(db_conn, TENANT_A, "ACT", "C-OK", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
+    db_conn.commit()
+    assert scan_guardrail_compliance(db_conn, TENANT_A) == []
 
 
 @pytest.mark.hardcheck
 def test_guardrail_compliance_detects_violation(db_conn):
-    conn = _mem_conn(db_conn)
     # C-NOGATE was fulfilled but never has a PASS/NEEDS_APPROVAL GUARDRAIL entry.
-    _insert_audit_row(conn, "ACT", "C-NOGATE", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
-    conn.commit()
-    assert scan_guardrail_compliance(conn) == ["C-NOGATE"]
+    _insert_audit_row(db_conn, TENANT_A, "ACT", "C-NOGATE", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
+    db_conn.commit()
+    assert scan_guardrail_compliance(db_conn, TENANT_A) == ["C-NOGATE"]
+
+
+@pytest.mark.hardcheck
+def test_guardrail_compliance_is_tenant_scoped(db_conn):
+    _insert_audit_row(db_conn, TENANT_B, "ACT", "C-NOGATE", {"status": "FULFILLED", "arm": "BILL_CREDIT"})
+    db_conn.commit()
+    assert scan_guardrail_compliance(db_conn, TENANT_A) == []
+    assert scan_guardrail_compliance(db_conn, TENANT_B) == ["C-NOGATE"]
 
 
 ## --------------------------------------------------------------------------- #
