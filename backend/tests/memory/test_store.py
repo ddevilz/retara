@@ -1,5 +1,6 @@
 from magenta.memory.embed import LocalEmbedder
 from magenta.memory.store import CustomerMemory
+from sqlalchemy import text
 from tests.db_fixtures import TENANT_A, TENANT_B
 
 
@@ -73,6 +74,14 @@ def test_embedding_roundtrip_preserves_float32(db_conn):
     mem.add_edge("CUST_0001", "customer", "reported", "bill shock", "2026-01-01")
     hits = mem.semantic_recall("CUST_0001", "bill", k=1)
     assert len(hits) == 1
+
+    raw = db_conn.execute(text(
+        'SELECT "EMBEDDING" FROM "MEMORY_EDGES" WHERE "TENANT_ID" = :t'
+    ), {"t": TENANT_A}).scalar_one()
+    back = np.frombuffer(raw, dtype=np.float32)
+    assert back.dtype == np.float32
+    np.testing.assert_allclose(back, [0.1, 0.2, 0.3], rtol=1e-6)
+    assert len(raw) == 3 * 4, "float32 is 4 bytes/element; a float64 write would be 24"
 
 
 def test_consolidate_is_tenant_isolated(db_conn):

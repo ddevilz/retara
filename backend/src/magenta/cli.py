@@ -677,10 +677,11 @@ def memory_cmd(action: str, customer_id: str = typer.Argument(None)):
         if customer_id is None:
             typer.secho("usage: magenta memory show <customer_id>", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=2)
-        m = CustomerMemory(get_conn(), DEFAULT_TENANT_ID, embedder=LocalEmbedder())
-        for e in m.timeline(customer_id):
-            span = f"{e.valid_from}->{e.valid_to or 'now'}"
-            typer.echo(f"[{span}] {e.subject} {e.relation} {e.object}")
+        with get_conn() as conn:
+            m = CustomerMemory(conn, DEFAULT_TENANT_ID, embedder=LocalEmbedder())
+            for e in m.timeline(customer_id):
+                span = f"{e.valid_from}->{e.valid_to or 'now'}"
+                typer.echo(f"[{span}] {e.subject} {e.relation} {e.object}")
     elif action == "eval":
         typer.echo(run_memory_eval())
     else:

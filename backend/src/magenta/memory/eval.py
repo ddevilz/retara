@@ -83,6 +83,12 @@ def run_memory_eval(n: int = 50, seed: int = 7) -> str:
                         and closed[0].valid_to.startswith(new_date)):
                     conflict_resolved += 1
         finally:
+            # If the loop raised a Postgres-level error, the transaction is
+            # aborted and the connection rejects further statements with
+            # InFailedSqlTransaction until rolled back -- roll back first so
+            # the cleanup DELETE below actually runs instead of masking the
+            # original exception with a second one.
+            conn.rollback()
             conn.execute(text('DELETE FROM "MEMORY_EDGES" WHERE "TENANT_ID" = :t'), {"t": eval_tenant})
             conn.commit()
 
