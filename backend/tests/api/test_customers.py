@@ -1,18 +1,29 @@
+import json
+
 import pytest
 
-from magenta.api import data_access as da
+
+def test_audit_rows_are_tenant_scoped(db_conn):
+    from magenta.api.data_access import audit_rows
+    from magenta.graph.build import persist_audit
+    from tests.db_fixtures import TENANT_A, TENANT_B
+
+    # persist_audit's entry shape is graph.nodes._audit()'s output: uppercase
+    # keys, PAYLOAD already json.dumps()d (see graph/nodes.py::_audit).
+    entry = [{"NODE": "ACT", "CUSTOMER_ID": "CUST_0001",
+              "TS": "2026-01-01T00:00:00+00:00",
+              "PAYLOAD": json.dumps({"status": "FULFILLED"})}]
+    persist_audit(db_conn, TENANT_A, entry)
+
+    assert len(audit_rows(TENANT_A, "CUST_0001")) == 1
+    assert audit_rows(TENANT_B, "CUST_0001") == []
 
 
-@pytest.fixture(autouse=True)
-def no_real_db(tmp_path, monkeypatch):
-    """Point audit reads at a DB path that never exists.
-
-    data/magenta.db is a live app artifact (a background ablation run may be
-    writing it right now) — tests must never open it. Pointing DB_PATH at a
-    nonexistent tmp path makes data_access._open_db() return None, so
-    audit_rows() deterministically returns [] without touching real state.
-    """
-    monkeypatch.setattr(da, "DB_PATH", tmp_path / "no-such-magenta.db")
+def test_open_db_is_gone():
+    """One connection path only."""
+    import magenta.api.data_access as da
+    assert not hasattr(da, "_open_db")
+    assert not hasattr(da, "DB_PATH")
 
 
 @pytest.mark.asyncio
