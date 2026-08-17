@@ -756,10 +756,11 @@ def cost_report(
         typer.echo("no PERSUADABLE customers in this cohort -- nothing to diagnose.")
         raise typer.Exit(code=0)
 
-    cache = SemanticCache(get_conn(), LocalEmbedder())
     meter = CostMeter()
     try:
-        batch_diagnose.diagnose_cohort(customers, reports, deps=None, meter=meter, cache=cache)
+        with get_conn() as conn:
+            cache = SemanticCache(conn, DEFAULT_TENANT_ID, LocalEmbedder())
+            batch_diagnose.diagnose_cohort(customers, reports, deps=None, meter=meter, cache=cache)
 
         by_id = {c.customer_id: c for c in customers}
         rng = random.Random(seed)
