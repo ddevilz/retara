@@ -19,7 +19,6 @@ also resolves for the graph.
 """
 from __future__ import annotations
 
-import sqlite3
 from functools import lru_cache
 
 from magenta.api.data_access import DEMO_POP_N, DEMO_POP_SEED
@@ -109,10 +108,7 @@ def get_graph_deps() -> GraphDeps:
     conn = get_conn()
     _, hidden = generate_population(DEMO_POP_N, seed=seed)
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-    try:
-        bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
-    except sqlite3.OperationalError:
-        pass
+    bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
     sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
     return GraphDeps(
         risk=_load_or_train_risk(seed),

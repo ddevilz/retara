@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 import hashlib
 import random
 import time
 from collections import Counter
+from contextlib import ExitStack
 
 import numpy as np
 import typer
@@ -32,7 +32,7 @@ from magenta.evalx.judge import judge_sample
 from magenta.experiment import Scorecard, run_experiment
 from magenta.graph import batch_diagnose
 from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scorecards
-from magenta.graph.build import GraphDeps, build_graph, open_sqlite_saver, persist_audit
+from magenta.graph.build import GraphDeps, build_graph, open_postgres_saver, persist_audit
 from magenta.graph.nodes import _DIAGNOSE_SYSTEM, _diagnose_user_prompt, _observables
 from magenta.graph.state import RiskUpliftReport, Timing
 from magenta.graph.tables import DEFAULT_TENANT_ID
@@ -227,24 +227,23 @@ def experiment(
 
     deps = None
     if policy in {"risk_rules", "agent_s1", "agent"}:
-        conn = get_conn()
-        _, hidden = generate_population(n=n, seed=seed)
-        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-        try:
+        with get_conn() as conn:
+            _, hidden = generate_population(n=n, seed=seed)
+            bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
             bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
-        except sqlite3.OperationalError:
-            pass
-        sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
-        deps = GraphDeps(
-            risk=_load_or_train_risk(seed),
-            uplift=_load_or_train_uplift(seed),
-            bandit=bandit,
-            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
-            oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
-            conn=conn, params=_GraphParams(), chat=_ChatShim(),
-            load_customer=lambda cid: None,
-        )
-    sc = run_experiment(make_policy(policy, deps), n=n, seed=seed, budget=budget)
+            sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+            deps = GraphDeps(
+                risk=_load_or_train_risk(seed),
+                uplift=_load_or_train_uplift(seed),
+                bandit=bandit,
+                catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+                oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
+                conn=conn, params=_GraphParams(), chat=_ChatShim(),
+                load_customer=lambda cid: None,
+            )
+            sc = run_experiment(make_policy(policy, deps), n=n, seed=seed, budget=budget)
+    else:
+        sc = run_experiment(make_policy(policy, deps), n=n, seed=seed, budget=budget)
     typer.echo(_format_scorecard(sc, policy))
 
 
@@ -263,26 +262,30 @@ def ablation(
     `magenta.llm.chat`/`chat_structured`, or pass a stub via `GraphDeps.chat`
     directly (as the graph tests do), to run this offline.
     """
-    def deps_factory(n_: int, seed_: int) -> GraphDeps:
-        conn = get_conn()
-        _, hidden = generate_population(n=n_, seed=seed_)
-        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed_)
-        try:
+    # `deps_factory(n, seed) -> GraphDeps` is called once per rung by
+    # `run_ladder`, and each returned GraphDeps.conn stays alive through that
+    # rung's `run_experiment` call inside `run_ladder` -- the factory can't
+    # close it before returning. An ExitStack scoped to this command closes
+    # every rung's connection together once the whole ladder has run, rather
+    # than leaking them past the command's return.
+    with ExitStack() as stack:
+        def deps_factory(n_: int, seed_: int) -> GraphDeps:
+            conn = stack.enter_context(get_conn())
+            _, hidden = generate_population(n=n_, seed=seed_)
+            bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed_)
             bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
-        except sqlite3.OperationalError:
-            pass
-        sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
-        return GraphDeps(
-            risk=_load_or_train_risk(seed_),
-            uplift=_load_or_train_uplift(seed_),
-            bandit=bandit,
-            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
-            oracle=ResponseOracle(hidden, params=sim_params, seed=seed_),
-            conn=conn, params=_GraphParams(), chat=_ChatShim(),
-            load_customer=lambda cid: None,
-        )
+            sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+            return GraphDeps(
+                risk=_load_or_train_risk(seed_),
+                uplift=_load_or_train_uplift(seed_),
+                bandit=bandit,
+                catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+                oracle=ResponseOracle(hidden, params=sim_params, seed=seed_),
+                conn=conn, params=_GraphParams(), chat=_ChatShim(),
+                load_customer=lambda cid: None,
+            )
 
-    ladder = run_ladder(n=n, seed=seed, deps_factory=deps_factory)
+        ladder = run_ladder(n=n, seed=seed, deps_factory=deps_factory)
 
     header = f"{'RUNG':<12}{'ATE':>10}{'CI':>22}{'WASTED':>9}{'SPEND':>12}{'€RETAINED':>13}"
     typer.echo(typer.style(header, bold=True))
@@ -527,36 +530,33 @@ def run_one(customer_id: str,
         typer.echo(f"(id not in seeded pop; using {customer_id})")
     customer = by_id.get(customer_id, customers[0])
 
-    conn = get_conn()
-    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-    try:
+    with get_conn() as conn:
+        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
         bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
-    except sqlite3.OperationalError:
-        pass
-    sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
-    deps = GraphDeps(
-        risk=_load_or_train_risk(seed),
-        uplift=_load_or_train_uplift(seed),
-        bandit=bandit,
-        catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
-        oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
-        conn=conn, params=_GraphParams(), chat=_ChatShim(),
-        load_customer=lambda cid: customer,
-    )
-    with open_sqlite_saver() as saver:
-        deps.checkpointer = saver
-        graph = build_graph(deps)
-        init = {
-            "customer_id": customer.customer_id, "campaign_id": campaign,
-            "consent_flags": {"MARKETING": True},
-            "risk": None, "diagnosis": None, "offer": None, "verdict": None,
-            "fulfillment": None, "outcome": None, "messages": [], "audit_log": [],
-            "requires_approval": False, "holdout": holdout,
-        }
-        final = graph.invoke(
-            init, config={"configurable": {"thread_id": f"{customer.customer_id}:{campaign}"}})
-    persist_audit(conn, deps.tenant_id, final.get("audit_log", []))
-    deps.bandit.save(conn, deps.tenant_id)
+        sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+        deps = GraphDeps(
+            risk=_load_or_train_risk(seed),
+            uplift=_load_or_train_uplift(seed),
+            bandit=bandit,
+            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+            oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
+            conn=conn, params=_GraphParams(), chat=_ChatShim(),
+            load_customer=lambda cid: customer,
+        )
+        with open_postgres_saver() as saver:
+            deps.checkpointer = saver
+            graph = build_graph(deps)
+            init = {
+                "customer_id": customer.customer_id, "campaign_id": campaign,
+                "consent_flags": {"MARKETING": True},
+                "risk": None, "diagnosis": None, "offer": None, "verdict": None,
+                "fulfillment": None, "outcome": None, "messages": [], "audit_log": [],
+                "requires_approval": False, "holdout": holdout,
+            }
+            final = graph.invoke(
+                init, config={"configurable": {"thread_id": f"{customer.customer_id}:{campaign}"}})
+        persist_audit(conn, deps.tenant_id, final.get("audit_log", []))
+        deps.bandit.save(conn, deps.tenant_id)
     _pretty(final)
 
 
@@ -586,32 +586,29 @@ def chat_cmd(
     by_id = {c.customer_id: c for c in customers}
     target = by_id.get(customer, customers[0]) if human else customers[0]
 
-    conn = get_conn()
-    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-    try:
+    with get_conn() as conn:
+        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
         bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
-    except sqlite3.OperationalError:
-        pass
-    sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
-    deps = GraphDeps(
-        risk=_load_or_train_risk(seed),
-        uplift=_load_or_train_uplift(seed),
-        bandit=bandit,
-        catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
-        oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
-        conn=conn, params=_GraphParams(), chat=_ChatShim(),
-        load_customer=lambda cid: by_id.get(cid, target),
-        campaign_id="CHAT",
-    )
+        sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
+        deps = GraphDeps(
+            risk=_load_or_train_risk(seed),
+            uplift=_load_or_train_uplift(seed),
+            bandit=bandit,
+            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+            oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
+            conn=conn, params=_GraphParams(), chat=_ChatShim(),
+            load_customer=lambda cid: by_id.get(cid, target),
+            campaign_id="CHAT",
+        )
 
-    if human:
-        result = run_negotiation(deps, target, persona=None)
-    else:
-        arche = _ARCHETYPE_BY_FLAG.get(persona)
-        if arche is None:
-            raise typer.BadParameter(f"unknown persona '{persona}'")
-        agent = PersonaAgent(make_persona(arche, target, hidden.get(target.customer_id)))
-        result = run_negotiation(deps, target, persona=agent)
+        if human:
+            result = run_negotiation(deps, target, persona=None)
+        else:
+            arche = _ARCHETYPE_BY_FLAG.get(persona)
+            if arche is None:
+                raise typer.BadParameter(f"unknown persona '{persona}'")
+            agent = PersonaAgent(make_persona(arche, target, hidden.get(target.customer_id)))
+            result = run_negotiation(deps, target, persona=agent)
 
     typer.echo(f"\nstatus={result.status.value} turns={result.turns_used} "
                f"offer={result.offer_final.arm.value if result.offer_final else 'none'}")
@@ -639,30 +636,29 @@ def eval_report(
     transcript corpus (lab 8 chat runs) is threaded through, so this branch
     makes no network call and needs no API key.
     """
-    conn = get_conn()
+    with get_conn() as conn:
+        golden = run_golden()
+        typer.echo("=== Golden scenarios ===")
+        for r in golden:
+            mark = "PASS" if r.passed else "FAIL"
+            typer.echo(f"  [{mark}] {r.name}: {r.detail}")
 
-    golden = run_golden()
-    typer.echo("=== Golden scenarios ===")
-    for r in golden:
-        mark = "PASS" if r.passed else "FAIL"
-        typer.echo(f"  [{mark}] {r.name}: {r.detail}")
+        holdout_viol = scan_holdout_purity(conn, DEFAULT_TENANT_ID)
+        guardrail_viol = scan_guardrail_compliance(conn, DEFAULT_TENANT_ID)
+        typer.echo("\n=== Hard checks ===")
+        typer.echo(f"  holdout_purity: {'PASS' if not holdout_viol else 'FAIL ' + str(holdout_viol)}")
+        typer.echo(f"  guardrail_compliance: "
+                   f"{'PASS' if not guardrail_viol else 'FAIL ' + str(guardrail_viol)}")
 
-    holdout_viol = scan_holdout_purity(conn, DEFAULT_TENANT_ID)
-    guardrail_viol = scan_guardrail_compliance(conn, DEFAULT_TENANT_ID)
-    typer.echo("\n=== Hard checks ===")
-    typer.echo(f"  holdout_purity: {'PASS' if not holdout_viol else 'FAIL ' + str(holdout_viol)}")
-    typer.echo(f"  guardrail_compliance: "
-               f"{'PASS' if not guardrail_viol else 'FAIL ' + str(guardrail_viol)}")
+        if judge:
+            rep = judge_sample([], baseline_fn=lambda c: "", k=0)
+            typer.echo(f"\n=== Judge (directional) ===\n  win_rate={rep.win_rate} ties={rep.ties}")
 
-    if judge:
-        rep = judge_sample([], baseline_fn=lambda c: "", k=0)
-        typer.echo(f"\n=== Judge (directional) ===\n  win_rate={rep.win_rate} ties={rep.ties}")
-
-    golden_failed = any(not r.passed for r in golden)
-    hard_failed = bool(holdout_viol) or bool(guardrail_viol)
-    if golden_failed or hard_failed:
-        raise typer.Exit(code=1)
-    typer.echo("\nAll hard checks passed.")
+        golden_failed = any(not r.passed for r in golden)
+        hard_failed = bool(holdout_viol) or bool(guardrail_viol)
+        if golden_failed or hard_failed:
+            raise typer.Exit(code=1)
+        typer.echo("\nAll hard checks passed.")
 
 
 ## ---- appended by lab 12 tasks 12.5+12.6: temporal customer memory CLI ----

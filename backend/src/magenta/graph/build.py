@@ -9,9 +9,9 @@ state machine):
     guardrail --(pass/needs_approval?)--> act | END   # REJECT stops here
     act -> outcome -> END
 
-thread_id = f"{customer_id}:{campaign_id}". SqliteSaver checkpointer at
-data_dir()/checkpoints.db (short-term per-thread memory). Pass checkpointer=None
-in GraphDeps to use an in-memory saver (tests).
+thread_id = f"{customer_id}:{campaign_id}". PostgresSaver checkpointer against
+DATABASE_URL (short-term per-thread memory). Pass checkpointer=None in GraphDeps
+to use an in-memory saver (tests).
 
 LangSmith: node-level tracing is automatic when LANGSMITH_TRACING=true +
 LANGSMITH_API_KEY are set in the env — LangGraph emits a run tree per node with
@@ -23,16 +23,15 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Callable
 
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from magenta.config import data_dir
+from magenta.db import database_url
 from magenta.graph import nodes as N
 from magenta.graph.state import OverallState
 from magenta.graph.tables import DEFAULT_TENANT_ID
@@ -82,20 +81,13 @@ def build_graph(deps: GraphDeps):
     return g.compile(checkpointer=checkpointer)
 
 
-def open_sqlite_saver(path: str | Path | None = None):
-    """Context manager returning a SqliteSaver. Use in the CLI.
+def open_postgres_saver():
+    """Context manager returning a PostgresSaver against DATABASE_URL.
 
-    NOTE (brief bug fixed on sight): the brief's default was the cwd-relative
-    literal "data/checkpoints.db", which only resolves correctly if the
-    process cwd happens to be the repo root. Commands are documented as
-    `cd backend && uv run magenta ...`, so cwd is `backend/` and that literal
-    would silently create `backend/data/checkpoints.db` instead. Anchor
-    through `magenta.config.data_dir()` (repo-root-relative) instead, matching
-    the RiskModel/UpliftModel default-path convention used elsewhere.
+    LangGraph checkpointer. One caller: the `magenta run-one` CLI command.
+    Every other path leaves GraphDeps.checkpointer None and gets InMemorySaver.
     """
-    db_path = Path(path) if path is not None else data_dir() / "checkpoints.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return SqliteSaver.from_conn_string(str(db_path))
+    return PostgresSaver.from_conn_string(database_url())
 
 
 def persist_audit(conn: Connection, tenant_id: str, audit_log: list[dict]) -> None:
