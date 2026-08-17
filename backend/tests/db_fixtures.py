@@ -17,7 +17,12 @@ from magenta.db import get_engine
 TENANT_A = "org_test_aaa"
 TENANT_B = "org_test_bbb"
 
-_PRESERVE = {"alembic_version"}
+_PRESERVE = {"alembic_version", "checkpoint_migrations"}
+# Both are schema-version bookkeeping owned by a migration tool -- Alembic and
+# LangGraph's PostgresSaver.setup() respectively -- not test data. Truncating
+# either makes its owner believe the schema is unversioned and re-run its
+# migrations; harmless for idempotent migrations, but turns a no-op setup()
+# into repeated work and makes the version table lie about what has run.
 
 
 @pytest.fixture(scope="session")
