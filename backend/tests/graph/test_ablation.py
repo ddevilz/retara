@@ -2,7 +2,6 @@ from magenta.brain.risk import Band, RiskAssessment
 from magenta.graph.ablation import RUNGS, make_policy
 from magenta.graph.build import GraphDeps
 from magenta.graph.policy import AgentPolicy
-from magenta.graph.tables import init_graph_tables
 from magenta.offers import Arm
 
 
@@ -62,18 +61,13 @@ def _real_deps(customer, fakes, spy_chat, conn):
     )
 
 
-def _conn(conn):
-    init_graph_tables(conn)
-    return conn
-
-
 def test_agent_s1_is_agent_policy_with_system2_disabled(customer, fakes, spy_chat, db_conn):
-    pol = make_policy("agent_s1", _real_deps(customer, fakes, spy_chat, _conn(db_conn)))
+    pol = make_policy("agent_s1", _real_deps(customer, fakes, spy_chat, db_conn))
     assert isinstance(pol, AgentPolicy)
     assert pol.deps.system2_enabled is False
 
 
 def test_agent_is_agent_policy_with_system2_enabled(customer, fakes, spy_chat, db_conn):
-    pol = make_policy("agent", _real_deps(customer, fakes, spy_chat, _conn(db_conn)))
+    pol = make_policy("agent", _real_deps(customer, fakes, spy_chat, db_conn))
     assert isinstance(pol, AgentPolicy)
     assert pol.deps.system2_enabled is True

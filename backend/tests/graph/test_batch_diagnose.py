@@ -5,6 +5,7 @@ from magenta.brain.uplift import Segment
 from magenta.cost.cache import SemanticCache
 from magenta.graph.batch_diagnose import diagnose_cohort, driver_signature
 from magenta.graph.state import RiskUpliftReport, Timing
+from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.memory.embed import LocalEmbedder
 
 
@@ -28,7 +29,7 @@ def _embedder():
 
 
 def _cache(conn, embedder, threshold: float = 0.75):
-    return SemanticCache(conn, embedder, threshold=threshold)
+    return SemanticCache(conn, DEFAULT_TENANT_ID, embedder, threshold=threshold)
 
 
 def test_signature_stable_and_shape_sensitive():

@@ -14,7 +14,18 @@ query), but patching `get_conn` too means that stays true even if a future
 edit here forgets to mock one of the scans -- `db_conn`'s tables are empty at
 the start of every test, and the real scan functions vacuously return `[]`
 for empty tables, so nothing would crash either.
+
+`eval_report` wraps its `get_conn()` call in `with get_conn() as conn:` (every
+call site does -- see `magenta.db`'s "caller closes it" contract). A plain
+`return_value=db_conn` would make that `with` statement call `db_conn`'s own
+`__enter__`/`__exit__` -- SQLAlchemy `Connection` supports the protocol, and
+`__exit__` *closes* the connection, which would tear down the fixture's
+shared connection mid-suite and break every test that runs after this one.
+`contextlib.nullcontext(db_conn)` gives `with` something to enter/exit that
+yields `db_conn` unchanged and closes nothing, so the fixture's connection
+and its rollback-on-teardown stay intact.
 """
+from contextlib import nullcontext
 from unittest.mock import patch
 
 from typer.testing import CliRunner
@@ -39,7 +50,7 @@ def test_eval_report_exit_zero_when_all_pass(db_conn):
     with patch("magenta.cli.run_golden", return_value=_all_pass()), \
          patch("magenta.cli.scan_holdout_purity", return_value=[]), \
          patch("magenta.cli.scan_guardrail_compliance", return_value=[]), \
-         patch("magenta.cli.get_conn", return_value=db_conn):
+         patch("magenta.cli.get_conn", return_value=nullcontext(db_conn)):
         res = runner.invoke(app, ["eval", "report"])
     assert res.exit_code == 0
     assert "PASS" in res.stdout or "passed" in res.stdout.lower()
@@ -49,7 +60,7 @@ def test_eval_report_exit_one_on_golden_fail(db_conn):
     with patch("magenta.cli.run_golden", return_value=_one_fail()), \
          patch("magenta.cli.scan_holdout_purity", return_value=[]), \
          patch("magenta.cli.scan_guardrail_compliance", return_value=[]), \
-         patch("magenta.cli.get_conn", return_value=db_conn):
+         patch("magenta.cli.get_conn", return_value=nullcontext(db_conn)):
         res = runner.invoke(app, ["eval", "report"])
     assert res.exit_code == 1
     assert "broke" in res.stdout
@@ -59,7 +70,7 @@ def test_eval_report_exit_one_on_holdout_violation(db_conn):
     with patch("magenta.cli.run_golden", return_value=_all_pass()), \
          patch("magenta.cli.scan_holdout_purity", return_value=["CUST-9"]), \
          patch("magenta.cli.scan_guardrail_compliance", return_value=[]), \
-         patch("magenta.cli.get_conn", return_value=db_conn):
+         patch("magenta.cli.get_conn", return_value=nullcontext(db_conn)):
         res = runner.invoke(app, ["eval", "report"])
     assert res.exit_code == 1
     assert "CUST-9" in res.stdout
@@ -70,7 +81,7 @@ def test_judge_flag_does_not_change_exit_code(db_conn):
     with patch("magenta.cli.run_golden", return_value=_all_pass()), \
          patch("magenta.cli.scan_holdout_purity", return_value=[]), \
          patch("magenta.cli.scan_guardrail_compliance", return_value=[]), \
-         patch("magenta.cli.get_conn", return_value=db_conn), \
+         patch("magenta.cli.get_conn", return_value=nullcontext(db_conn)), \
          patch("magenta.cli.judge_sample",
                return_value=JudgeReport(win_rate=0.4, ties=1, examples=[])):
         res = runner.invoke(app, ["eval", "report", "--judge"])

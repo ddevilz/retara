@@ -2,7 +2,17 @@ import json
 
 import pytest
 
-from magenta.graph.ablation import RUNGS, write_scorecards
+from magenta.brain.bandit import ThompsonBandit
+from magenta.brain.features import FEATURE_NAMES
+from magenta.brain.risk import RiskModel
+from magenta.brain.uplift import UpliftModel
+from magenta.config import configs_dir
+from magenta.graph.ablation import RUNGS, run_ladder, write_scorecards
+from magenta.graph.build import GraphDeps
+from magenta.graph.state import Diagnosis
+from magenta.offers import Arm, OfferCatalog
+from magenta.sim.oracle import ResponseOracle, SimParams
+from magenta.sim.population import generate_population
 
 
 class FakeScorecard:
@@ -39,24 +49,11 @@ def test_write_scorecards_schema(tmp_path):
 def test_ladder_ordering_agent_ge_rules_small_n(db_conn):
     """Seeded sanity: agent ATE >= rules ATE. Report honestly if it regresses."""
     pytest.importorskip("lightgbm")
-    from magenta.graph.ablation import run_ladder
 
     def deps_factory(n, seed):
         # build real deps; requires trained models present (labs 3-5 artifacts).
-        from magenta.brain.bandit import ThompsonBandit
-        from magenta.brain.features import FEATURE_NAMES
-        from magenta.brain.risk import RiskModel
-        from magenta.brain.uplift import UpliftModel
-        from magenta.config import configs_dir
-        from magenta.graph.build import GraphDeps
-        from magenta.graph.state import Diagnosis
-        from magenta.graph.tables import init_graph_tables
-        from magenta.offers import Arm, OfferCatalog
-        from magenta.sim.oracle import ResponseOracle, SimParams
-        from magenta.sim.population import generate_population
-
+        # Schema is Alembic-owned and already exists on db_conn -- no init call needed.
         customers, hidden = generate_population(n=n, seed=seed)
-        init_graph_tables(db_conn)
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
 
         class _Chat:

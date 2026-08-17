@@ -1,6 +1,6 @@
 """The single Postgres fixture for the whole suite.
 
-Replaces ~20 hand-rolled `sqlite3.connect(":memory:")` sites. Tables are truncated
+Replaces ~20 hand-rolled in-memory-db connection sites. Tables are truncated
 after every test, so tests stay isolated without paying to re-run migrations per test.
 """
 from __future__ import annotations
