@@ -21,6 +21,7 @@ import; the env var is the switch.
 from __future__ import annotations
 
 import functools
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
@@ -81,13 +82,27 @@ def build_graph(deps: GraphDeps):
     return g.compile(checkpointer=checkpointer)
 
 
+@contextmanager
 def open_postgres_saver():
-    """Context manager returning a PostgresSaver against DATABASE_URL.
+    """Context manager yielding a PostgresSaver against DATABASE_URL.
 
     LangGraph checkpointer. One caller: the `magenta run-one` CLI command.
     Every other path leaves GraphDeps.checkpointer None and gets InMemorySaver.
+
+    setup() is idempotent (CREATE TABLE IF NOT EXISTS internally) and creates
+    LangGraph's own checkpoint tables, which Alembic does not own -- without
+    it, the first run against a fresh database fails with UndefinedTable.
+
+    `database_url()` is a SQLAlchemy DSN (`postgresql+psycopg://...`), but
+    `PostgresSaver` connects with raw `psycopg`, which doesn't understand the
+    `+psycopg` driver suffix in the scheme (`psycopg.ProgrammingError: missing
+    "=" after "postgresql+psycopg://..."`) -- strip it to the plain
+    `postgresql://` scheme psycopg expects.
     """
-    return PostgresSaver.from_conn_string(database_url())
+    conn_string = database_url().replace("postgresql+psycopg://", "postgresql://", 1)
+    with PostgresSaver.from_conn_string(conn_string) as saver:
+        saver.setup()
+        yield saver
 
 
 def persist_audit(conn: Connection, tenant_id: str, audit_log: list[dict]) -> None:

@@ -4,7 +4,8 @@ import pytest
 from sqlalchemy import text
 
 from magenta.brain.uplift import Segment
-from magenta.graph.build import GraphDeps, build_graph, persist_audit
+from magenta.db import get_conn
+from magenta.graph.build import GraphDeps, build_graph, open_postgres_saver, persist_audit
 from magenta.offers import Arm
 
 
@@ -127,3 +128,17 @@ def test_persist_audit_three_arg_call_regression(db_conn):
         {"c": "CUST-STALE-CALLER"},
     ).mappings().first()
     assert row is not None and row["TENANT_ID"] == "org_regression"
+
+
+def test_open_postgres_saver_creates_its_tables(migrated_db):
+    """LangGraph's checkpoint tables are NOT owned by Alembic. Without setup(),
+    `magenta run-one` fails with UndefinedTable on a fresh database."""
+    with open_postgres_saver():
+        pass
+
+    with get_conn() as conn:
+        found = conn.execute(text(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name LIKE 'checkpoint%'"
+        )).scalar_one()
+    assert found > 0, "PostgresSaver.setup() did not create its checkpoint tables"
