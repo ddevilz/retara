@@ -21,10 +21,11 @@ constraint for these tests.
 """
 from __future__ import annotations
 
-import sqlite3
+import uuid
 
 from magenta.brain.risk import Band, Driver, RiskAssessment
 from magenta.config import configs_dir
+from magenta.db import get_conn
 from magenta.graph.build import GraphDeps, build_graph
 from magenta.graph.state import Diagnosis
 from magenta.offers import Arm, OfferCatalog
@@ -232,8 +233,8 @@ def _build_hidden(customer_id: str, overrides: dict) -> dict[str, HiddenState]:
 
 
 def run_scenario(customer_kwargs: dict, hidden_kwargs: dict, holdout: bool = False) -> dict:
-    """Build one customer+hidden state, run the REAL compiled graph on an
-    in-memory sqlite conn, and report the disposition.
+    """Build one customer+hidden state, run the REAL compiled graph on a real
+    Postgres conn, and report the disposition.
 
     Returns a dict with keys `contacted` (bool), `arm` (Arm | None), and
     `fulfilled` (bool) -- exactly what `magenta.evalx.golden._evaluate` checks
@@ -243,14 +244,25 @@ def run_scenario(customer_kwargs: dict, hidden_kwargs: dict, holdout: bool = Fal
     from `scenario.expected.must_not_fulfill`, since state["holdout"] is the
     graph's only mechanism (Lab 7) for guaranteeing shadow-only, never-fulfilled
     behavior regardless of which arm decide() would otherwise pick.
+
+    Tenant isolation replaces the old fresh-in-memory-db-per-call isolation:
+    a brand new in-process db per call meant no scenario could ever see
+    another scenario's (or another test run's) GUARDRAIL_CONTACTS/FULFILLMENTS
+    rows -- e.g. the frequency cap (deps.params.freq_cap_max=1 per 14 days)
+    would otherwise block every scenario after the first, since every golden
+    scenario shares the same _CUSTOMER_ID. A shared committed Postgres conn
+    has no such reset, so each call gets its own throwaway TENANT_ID instead;
+    every tenant-scoped read/write in graph/tables.py is scoped to it, so
+    scenarios (and repeated test runs) stay as isolated as the old in-memory
+    db was, without needing a rollback.
     """
     customer = _build_customer(_CUSTOMER_ID, customer_kwargs)
     hidden = _build_hidden(_CUSTOMER_ID, hidden_kwargs)
     segment = hidden[_CUSTOMER_ID].persuadable_segment
     p_churn, tau = _SEGMENT_RISK_UPLIFT[segment]
+    tenant_id = f"scenario_{uuid.uuid4().hex}"
 
-    conn = sqlite3.connect(":memory:")
-    try:
+    with get_conn() as conn:
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
         deps = GraphDeps(
             risk=_ScenarioRisk(p_churn),
@@ -263,6 +275,7 @@ def run_scenario(customer_kwargs: dict, hidden_kwargs: dict, holdout: bool = Fal
             chat=_ScenarioChat(customer),
             load_customer=lambda cid: customer,
             campaign_id=_CAMPAIGN_ID,
+            tenant_id=tenant_id,
         )
         graph = build_graph(deps)
         init_state = {
@@ -276,8 +289,6 @@ def run_scenario(customer_kwargs: dict, hidden_kwargs: dict, holdout: bool = Fal
             init_state,
             config={"configurable": {"thread_id": f"{customer.customer_id}:{_CAMPAIGN_ID}"}},
         )
-    finally:
-        conn.close()
 
     risk_report = final.get("risk")
     contacted = bool(risk_report is not None and risk_report.engage)
