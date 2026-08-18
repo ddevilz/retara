@@ -36,8 +36,9 @@ clone. Don't hunt for them in git history. Build ledger: `.superpowers/sdd/progr
 - **Pydantic v2** everywhere; **seeds everywhere** (same seed ⇒ identical output — explicit `seed`/`rng` params, sha256 not `hash()`).
 - **Plain `openai` package** — NO LangChain/LiteLLM gateway. Groq default via `GROQ_API_KEY`; `OPENAI_API_KEY` wins if set. Per-role env override: `MAGENTA_MODEL_<CHEAP|LARGE|JUDGE>`.
 - **LangSmith** via `langsmith.wrappers.wrap_openai` + `LANGSMITH_TRACING` (no LangChain).
-- **No network in tests** — mock `magenta.llm.chat`/`chat_structured`. (DB: `:memory:`
-  SQLite today; moves to real Postgres in Phase 1 — see §Production direction.)
+- **No network in tests** — mock `magenta.llm.chat`/`chat_structured`. DB: real
+  Postgres, including tests (see §Production direction) — the `:memory:` SQLite
+  rule was retired in Phase 1.1.
 - **All imports at module top** — NO function-level/lazy imports, ever (owner rule).
 - **No module-level name shadowing** — a typer command `def chat(...)` once shadowed
   `magenta.llm.chat` and crashed a live cohort run. Command fns get `_cmd` suffixes
@@ -71,13 +72,17 @@ Demo: `magenta serve` + `cd frontend && npm run dev` → localhost:5173.
   `-m "not slow"` skips the heavy ladder test.
 - Never commit `.env` (real keys live there), model binaries, or `data/` artifacts.
 
-## Production direction (decided 2026-08-14 — DESIGNED, NOT YET BUILT)
+## Production direction (decided 2026-08-14)
 Pivot: hackathon demo → real multi-tenant SaaS. Driving milestone: **one design
 partner using it on their own customer data.** Full spec (local-only, gitignored):
 `docs/superpowers/specs/2026-08-14-production-platform-design.md`.
 
-**Nothing in this section is implemented.** Everything above still describes the
-live code: single-tenant, SQLite, no auth. Treat this as direction, not state.
+**Phase 1.1 is BUILT:** Postgres + SQLAlchemy Core + Alembic, `TENANT_ID` on
+all six tables, tenant-scoped composite idempotency key, tests run on real
+Postgres. **Phases 1.2 onward remain DESIGNED, NOT YET BUILT** — no Clerk
+auth, no Procrastinate jobs, no per-tenant `get_graph_deps()`, no live mode.
+Treat everything below this point as direction for those phases, not current
+state, unless noted otherwise above.
 
 Locked stack: Postgres + Alembic + SQLAlchemy Core (deliberate SQL retained, not
 the ORM) · Clerk auth · **Procrastinate** for jobs (NOT Celery — transactional
