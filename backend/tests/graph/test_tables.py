@@ -56,3 +56,14 @@ def test_contacts_since_is_tenant_scoped(db_conn):
     record_contact(db_conn, TENANT_B, "CUST_0003", "CAMP-1", now)
     since = now - timedelta(days=1)
     assert contacts_since(db_conn, TENANT_A, "CUST_0003", since) == 1
+
+
+def test_contacts_since_filters_by_window_boundary(db_conn):
+    """Boundary coverage: contacts_since backs the contact frequency cap, so the
+    `>= :since` clause has to actually filter, not just exist. Without this,
+    deleting the clause leaves the suite green (it did -- see final-fix-report)."""
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=14)
+    record_contact(db_conn, TENANT_A, "CUST_0004", "CAMP-1", now - timedelta(days=7))   # inside
+    record_contact(db_conn, TENANT_A, "CUST_0004", "CAMP-1", now - timedelta(days=20))  # outside
+    assert contacts_since(db_conn, TENANT_A, "CUST_0004", since) == 1
