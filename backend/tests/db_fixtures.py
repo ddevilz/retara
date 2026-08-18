@@ -64,6 +64,8 @@ def db_conn(migrated_db) -> Connection:
     no-ops. Truncating on teardown is immune to that.
     """
     conn = get_engine().connect()
+    _truncate_all(conn)           # first test of a run must not inherit rows
+                                   # left by a prior run that crashed mid-test
     try:
         yield conn
     finally:
