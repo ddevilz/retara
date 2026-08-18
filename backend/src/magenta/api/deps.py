@@ -19,7 +19,6 @@ also resolves for the graph.
 """
 from __future__ import annotations
 
-import sqlite3
 from functools import lru_cache
 
 from magenta.api.data_access import DEMO_POP_N, DEMO_POP_SEED
@@ -31,7 +30,7 @@ from magenta.brain.uplift import UpliftModel
 from magenta.config import configs_dir
 from magenta.db import get_conn
 from magenta.graph.build import GraphDeps
-from magenta.graph.tables import init_graph_tables
+from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.llm import chat, chat_structured
 from magenta.offers import Arm, OfferCatalog
 from magenta.sim.oracle import ResponseOracle, SimParams
@@ -107,13 +106,11 @@ def get_graph_deps() -> GraphDeps:
     doesn't fit here)."""
     seed = DEMO_POP_SEED
     conn = get_conn()
-    init_graph_tables(conn)
     _, hidden = generate_population(DEMO_POP_N, seed=seed)
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-    try:
-        bandit.load(conn)  # no-op prior if BANDIT_POSTERIOR doesn't exist yet
-    except sqlite3.OperationalError:
-        pass
+    # DEFAULT_TENANT_ID: no per-tenant get_graph_deps(tenant_id) yet -- Phase 1.3
+    # replaces this with the tenant_id argument that call gets.
+    bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
     sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
     return GraphDeps(
         risk=_load_or_train_risk(seed),

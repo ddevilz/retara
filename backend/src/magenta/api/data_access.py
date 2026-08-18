@@ -19,14 +19,22 @@ Two deviations from the Task 10.2 brief snippet, found while wiring this up
    pulled out of it (present on some node payloads, e.g. OUTCOME sets
    "holdout", but not guaranteed on all) since no node persists a dedicated
    rationale string today.
+
+Postgres note (Task 9): AUDIT_LOG now lives in Postgres (Alembic
+0001_baseline_schema), TENANT_ID-scoped. PAYLOAD is JSONB -- psycopg
+returns a dict, so there is no json.loads here; TS is TIMESTAMPTZ -- a
+datetime, so .isoformat() rather than str(). ``_open_db``/``DB_PATH`` (a
+second, hardcoded connection path to the same physical file get_conn()
+already opens) are gone -- one connection path only.
 """
 from __future__ import annotations
 
 import json
-import sqlite3
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+
+from sqlalchemy import text
 
 from magenta.api.schemas import (
     AuditRow,
@@ -36,11 +44,11 @@ from magenta.api.schemas import (
     Scorecards,
 )
 from magenta.config import data_dir
+from magenta.db import get_conn
 from magenta.sim.population import Customer, generate_population
 
 DATA_DIR: Path = data_dir()
 SCORECARDS_PATH = DATA_DIR / "scorecards.json"
-DB_PATH = DATA_DIR / "magenta.db"
 
 # Population seed/size used for the demo customer directory. Must match the
 # seed the graph/experiment use so IDs line up with AUDIT_LOG rows.
@@ -115,48 +123,32 @@ def get_customer(customer_id: str) -> Optional[CustomerSummary]:
     return None
 
 
-def _open_db() -> Optional[sqlite3.Connection]:
-    if not DB_PATH.exists():
-        return None
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
+def audit_rows(tenant_id: str, customer_id: str, limit: int = 50) -> list[AuditRow]:
+    """PAYLOAD is JSONB -- psycopg returns a dict, so there is no json.loads here."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            text(
+                'SELECT "ID", "TS", "CUSTOMER_ID", "NODE", "PAYLOAD" FROM "AUDIT_LOG" '
+                'WHERE "TENANT_ID" = :tenant_id AND "CUSTOMER_ID" = :customer_id '
+                'ORDER BY "ID" DESC LIMIT :limit'
+            ),
+            {"tenant_id": tenant_id, "customer_id": customer_id, "limit": limit},
+        ).mappings().all()
 
-
-def audit_rows(customer_id: str, limit: int = 50) -> list[AuditRow]:
-    conn = _open_db()
-    if conn is None:
-        return []
-    try:
-        cur = conn.execute(
-            """
-            SELECT ID, TS, CUSTOMER_ID, NODE, PAYLOAD
-            FROM AUDIT_LOG
-            WHERE CUSTOMER_ID = ?
-            ORDER BY ID DESC
-            LIMIT ?
-            """,
-            (customer_id, limit),
-        )
-        out: list[AuditRow] = []
-        for row in cur.fetchall():
-            try:
-                decision = json.loads(row["PAYLOAD"]) if row["PAYLOAD"] else {}
-            except (json.JSONDecodeError, TypeError):
-                decision = {"raw": row["PAYLOAD"]}
-            rationale = str(decision.get("rationale") or decision.get("narrative") or "")
-            holdout = bool(decision.get("holdout", False))
-            out.append(
-                AuditRow(
-                    id=row["ID"],
-                    ts=str(row["TS"]),
-                    customer_id=row["CUSTOMER_ID"],
-                    node=row["NODE"],
-                    decision=decision,
-                    rationale=rationale,
-                    holdout=holdout,
-                )
+    out: list[AuditRow] = []
+    for r in rows:
+        decision = r["PAYLOAD"] or {}
+        rationale = str(decision.get("rationale") or decision.get("narrative") or "")
+        holdout = bool(decision.get("holdout", False))
+        out.append(
+            AuditRow(
+                id=r["ID"],
+                ts=r["TS"].isoformat(),
+                customer_id=r["CUSTOMER_ID"],
+                node=r["NODE"],
+                decision=decision,
+                rationale=rationale,
+                holdout=holdout,
             )
-        return out
-    finally:
-        conn.close()
+        )
+    return out

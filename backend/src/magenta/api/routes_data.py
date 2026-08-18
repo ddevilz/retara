@@ -10,6 +10,7 @@ from magenta.api.schemas import (
     CustomerSummary,
     Scorecards,
 )
+from magenta.graph.tables import DEFAULT_TENANT_ID
 
 router = APIRouter(prefix="/api", tags=["data"])
 
@@ -32,9 +33,9 @@ def customer_360(customer_id: str) -> Customer360:
     c = da.get_customer(customer_id)
     if c is None:
         raise HTTPException(status_code=404, detail=f"unknown customer {customer_id}")
-    return Customer360(customer=c, audit=da.audit_rows(customer_id))
+    return Customer360(customer=c, audit=da.audit_rows(DEFAULT_TENANT_ID, customer_id))
 
 
 @router.get("/audit", response_model=list[AuditRow])
 def audit(customer_id: str = Query(...)) -> list[AuditRow]:
-    return da.audit_rows(customer_id)
+    return da.audit_rows(DEFAULT_TENANT_ID, customer_id)

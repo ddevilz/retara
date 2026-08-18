@@ -17,7 +17,7 @@ dependencies = [
     "scikit-uplift>=0.5.1",
     "joblib>=1.4",
     "langgraph>=0.2",
-    "langgraph-checkpoint-sqlite>=1.0",
+    "langgraph-checkpoint-postgres>=2.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "sse-starlette>=2.1",
@@ -26,6 +26,9 @@ dependencies = [
     "llvmlite>=0.42",
     "sentence-transformers>=5.6.0",
     "tqdm>=4.68.3",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
 ]
 
 [project.scripts]
@@ -43,6 +46,7 @@ packages = ["src/magenta"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-q"
 asyncio_mode = "auto"
 markers = [

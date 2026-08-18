@@ -75,7 +75,7 @@ async def run_one(req: RunOneRequest):
             "requires_approval": False,
             "holdout": False,
         }
-        config = {"configurable": {"thread_id": f"{customer.customer_id}:{_CAMPAIGN_ID}"}}
+        config = {"configurable": {"thread_id": f"{deps.tenant_id}:{customer.customer_id}:{_CAMPAIGN_ID}"}}
 
         def _iter_updates(sink):
             for chunk in graph.stream(initial, config=config, stream_mode=["updates"]):
@@ -97,7 +97,7 @@ async def run_one(req: RunOneRequest):
         # Persist the audit trail so the 10.2 customer-360 view shows this run.
         conn = getattr(deps, "conn", None)
         if conn is not None and audit_rows:
-            persist_audit(conn, audit_rows)
+            persist_audit(conn, deps.tenant_id, audit_rows)
         yield sse_event("done", {"customer_id": req.customer_id})
 
     return EventSourceResponse(gen())

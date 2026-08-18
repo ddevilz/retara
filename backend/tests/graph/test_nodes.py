@@ -1,6 +1,5 @@
-import sqlite3
-
 import pytest
+from sqlalchemy import text
 
 from magenta.brain.risk import Band, Driver
 from magenta.brain.uplift import Segment
@@ -15,7 +14,7 @@ from magenta.graph.nodes import (
     sense,
 )
 from magenta.graph.state import Diagnosis, GuardrailVerdict, RiskUpliftReport, Timing
-from magenta.graph.tables import init_graph_tables
+from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.offers import Arm, OfferDecision
 from magenta.sim.population import Customer
 import magenta.graph.nodes as nodes_mod
@@ -24,6 +23,7 @@ import magenta.graph.nodes as nodes_mod
 ## --- tiny deps holder used only for node unit tests -------------------------
 class Deps:
     def __init__(self, **kw):
+        kw.setdefault("tenant_id", DEFAULT_TENANT_ID)
         self.__dict__.update(kw)
 
 
@@ -140,20 +140,20 @@ def test_decide_intersects_catalog_and_diagnosis(customer, fakes, monkeypatch):
     assert out["audit_log"][0]["NODE"] == "DECIDE"
 
 
-def test_guardrail_passes_clean(customer, fakes):
+def test_guardrail_passes_clean(customer, fakes, db_conn):
     deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"],
-                conn=_mem_conn(), params=Params())
+                conn=db_conn, params=Params())
     s = _state_with_diagnosis(customer)
     s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
     out = guardrail(s, deps)
     assert out["verdict"].decision == "PASS"
 
 
-def test_guardrail_rejects_on_margin(customer, fakes):
+def test_guardrail_rejects_on_margin(customer, fakes, db_conn):
     cat = fakes["catalog"]; cat._min_margin = 5.0
     # margin 22 - cost 20 = 2 < 5 => reject
     deps = Deps(load_customer=lambda cid: customer, catalog=cat,
-                conn=_mem_conn(), params=Params())
+                conn=db_conn, params=Params())
     s = _state_with_diagnosis(customer)
     s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=20.0, propensity=0.6)
     out = guardrail(s, deps)
@@ -161,9 +161,9 @@ def test_guardrail_rejects_on_margin(customer, fakes):
     assert "MIN_MARGIN" in out["verdict"].failed_policies
 
 
-def test_guardrail_rejects_on_consent(customer, fakes):
+def test_guardrail_rejects_on_consent(customer, fakes, db_conn):
     deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"],
-                conn=_mem_conn(), params=Params())
+                conn=db_conn, params=Params())
     s = _state_with_diagnosis(customer)
     s["consent_flags"] = {"MARKETING": False}
     s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
@@ -172,9 +172,9 @@ def test_guardrail_rejects_on_consent(customer, fakes):
     assert "CONSENT" in out["verdict"].failed_policies
 
 
-def test_guardrail_value_cap_needs_approval(customer, fakes):
+def test_guardrail_value_cap_needs_approval(customer, fakes, db_conn):
     deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"],
-                conn=_mem_conn(), params=Params())
+                conn=db_conn, params=Params())
     s = _state_with_diagnosis(customer)
     s["offer"] = OfferDecision(arm=Arm.DEVICE_UPGRADE, cost=50.0, propensity=0.6)
     # cost 50 > value_cap 40 => NEEDS_APPROVAL (but margin: 22-50 <0 also fails)
@@ -188,45 +188,38 @@ def test_guardrail_value_cap_needs_approval(customer, fakes):
     assert out["requires_approval"] is True
 
 
-def _mem_conn():
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    init_graph_tables(c)
-    return c
-
-
 ## --------------------------------------------------------------------------- #
 ## ACT — idempotent fulfillment; holdout => shadow-log only.
 ## --------------------------------------------------------------------------- #
 def test_idempotency_key_stable():
-    k1 = idempotency_key("CUST-1", "CAMP-A", Arm.BILL_CREDIT)
-    k2 = idempotency_key("CUST-1", "CAMP-A", Arm.BILL_CREDIT)
-    k3 = idempotency_key("CUST-1", "CAMP-A", Arm.DATA_BOOST)
+    k1 = idempotency_key(DEFAULT_TENANT_ID, "CUST-1", "CAMP-A", Arm.BILL_CREDIT)
+    k2 = idempotency_key(DEFAULT_TENANT_ID, "CUST-1", "CAMP-A", Arm.BILL_CREDIT)
+    k3 = idempotency_key(DEFAULT_TENANT_ID, "CUST-1", "CAMP-A", Arm.DATA_BOOST)
     assert k1 == k2 and k1 != k3 and len(k1) == 64
 
 
-def test_act_fulfills_once_on_double_invoke(customer, fakes):
-    conn = _mem_conn()
+def test_act_fulfills_once_on_double_invoke(customer, fakes, db_conn):
+    conn = db_conn
     deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"], conn=conn)
     s = _state_with_diagnosis(customer)
     s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
     s["verdict"] = GuardrailVerdict(decision="PASS")
     o1 = act(s, deps)
     o2 = act(s, deps)   # re-run (simulates interrupt/resume)
-    n = conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0]
+    n = conn.execute(text('SELECT count(*) FROM "FULFILLMENTS"')).scalar_one()
     assert n == 1
     assert o1["fulfillment"]["IDEMPOTENCY_KEY"] == o2["fulfillment"]["IDEMPOTENCY_KEY"]
 
 
-def test_act_holdout_shadow_no_row_but_audit(customer, fakes):
-    conn = _mem_conn()
+def test_act_holdout_shadow_no_row_but_audit(customer, fakes, db_conn):
+    conn = db_conn
     deps = Deps(load_customer=lambda cid: customer, catalog=fakes["catalog"], conn=conn)
     s = _state_with_diagnosis(customer)
     s["offer"] = OfferDecision(arm=Arm.BILL_CREDIT, cost=8.0, propensity=0.6)
     s["verdict"] = GuardrailVerdict(decision="PASS")
     s["holdout"] = True
     out = act(s, deps)
-    n = conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0]
+    n = conn.execute(text('SELECT count(*) FROM "FULFILLMENTS"')).scalar_one()
     assert n == 0
     assert out["fulfillment"]["status"] == "SHADOW"
     assert out["audit_log"][0]["NODE"] == "ACT"
@@ -263,12 +256,11 @@ def test_outcome_holdout_no_bandit_update(customer, fakes):
     assert fakes["bandit"].updates == []   # holdout never trains the bandit
 
 
-def test_no_action_equivalence_none_vs_arm(customer, fakes):
+def test_no_action_equivalence_none_vs_arm(customer, fakes, db_conn):
     """guardrail/act treat offer=None and offer.arm==NO_ACTION identically:
     trivially PASS, no fulfillment row, no contact record (pins the accepted
     decide()-fallback deviation)."""
-    conn = sqlite3.connect(":memory:")
-    init_graph_tables(conn)
+    conn = db_conn
     deps = Deps(conn=conn, params=Params(), catalog=fakes["catalog"],
                 load_customer=lambda cid: customer)
     base = {"customer_id": "C1", "campaign_id": "K1", "consent_flags": {"marketing": True},
@@ -282,8 +274,8 @@ def test_no_action_equivalence_none_vs_arm(customer, fakes):
         a = act(dict(state, verdict=v["verdict"]), deps)
         assert a["fulfillment"]["status"] in ("NO_ACTION", "SKIPPED", "NONE") or \
             a["fulfillment"].get("IDEMPOTENCY_KEY") is None
-    assert conn.execute("SELECT count(*) FROM FULFILLMENTS").fetchone()[0] == 0
-    assert conn.execute("SELECT count(*) FROM GUARDRAIL_CONTACTS").fetchone()[0] == 0
+    assert conn.execute(text('SELECT count(*) FROM "FULFILLMENTS"')).scalar_one() == 0
+    assert conn.execute(text('SELECT count(*) FROM "GUARDRAIL_CONTACTS"')).scalar_one() == 0
 
 
 def test_diagnose_prompt_lists_valid_arm_menu(customer, fakes, spy_chat):

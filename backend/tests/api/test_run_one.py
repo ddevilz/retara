@@ -37,8 +37,11 @@ def _parse_sse(text: str):
 
 @pytest.fixture
 def patched_graph(monkeypatch):
+    class _FakeDeps:
+        tenant_id = "org_default"
+
     monkeypatch.setattr(rs, "build_graph", lambda deps: _FakeGraph())
-    monkeypatch.setattr(rs, "get_graph_deps", lambda: object())
+    monkeypatch.setattr(rs, "get_graph_deps", lambda: _FakeDeps())
 
     class _C:
         customer_id = "CUST-DEMO"

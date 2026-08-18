@@ -1,6 +1,8 @@
 # Magenta Retain — repo conventions (authoritative)
 
-Telecom churn *retention* agent (hiring hackathon → DTDL AI Engineer).
+Telecom churn *retention* agent. Began as a DTDL AI Engineer hiring hackathon;
+**since 2026-08-14 being built out as a real multi-tenant SaaS** — see
+§Production direction (bottom), which governs all new work.
 Thesis: predict whom we can **save** (uplift, not risk), pick the offer with a
 bandit, negotiate via LLM, and **prove causation** against an untouched holdout.
 Spec: `docs/superpowers/specs/2026-06-30-magenta-retain-design.md` (§0.5 governs).
@@ -25,11 +27,18 @@ clone. Don't hunt for them in git history. Build ledger: `.superpowers/sdd/progr
 - `data/` — `telco_marginals.json` (committed); everything else gitignored (db, models, scorecards.json, telco_real.csv, parity_report.txt).
 
 ## Hard conventions (do not violate)
-- **Enum values ALL_CAPS** (`Arm.BILL_CREDIT`); **SQLite table AND column names ALL_CAPS**.
+- **Enum values ALL_CAPS** (`Arm.BILL_CREDIT`); **SQL table AND column names ALL_CAPS** —
+  every table, every column, no exceptions. On Postgres this requires **double-quoting
+  identifiers in DDL and in every query** (`"FULFILLMENTS"`, `"TENANT_ID"`): unquoted
+  identifiers silently fold to lowercase, so `CREATE TABLE FULFILLMENTS` yields a table
+  actually named `fulfillments` and later quoted references then fail to find it.
+  Third-party schemas (`procrastinate_jobs`, `information_schema`) keep their own casing.
 - **Pydantic v2** everywhere; **seeds everywhere** (same seed ⇒ identical output — explicit `seed`/`rng` params, sha256 not `hash()`).
 - **Plain `openai` package** — NO LangChain/LiteLLM gateway. Groq default via `GROQ_API_KEY`; `OPENAI_API_KEY` wins if set. Per-role env override: `MAGENTA_MODEL_<CHEAP|LARGE|JUDGE>`.
 - **LangSmith** via `langsmith.wrappers.wrap_openai` + `LANGSMITH_TRACING` (no LangChain).
-- **No network in tests** — mock `magenta.llm.chat`/`chat_structured`; `:memory:` SQLite.
+- **No network in tests** — mock `magenta.llm.chat`/`chat_structured`. DB: real
+  Postgres, including tests (see §Production direction) — the `:memory:` SQLite
+  rule was retired in Phase 1.1.
 - **All imports at module top** — NO function-level/lazy imports, ever (owner rule).
 - **No module-level name shadowing** — a typer command `def chat(...)` once shadowed
   `magenta.llm.chat` and crashed a live cohort run. Command fns get `_cmd` suffixes
@@ -62,3 +71,47 @@ Demo: `magenta serve` + `cd frontend && npm run dev` → localhost:5173.
 - Full backend suite is slow (LightGBM training) — prefer targeted `pytest tests/<area>/`;
   `-m "not slow"` skips the heavy ladder test.
 - Never commit `.env` (real keys live there), model binaries, or `data/` artifacts.
+
+## Production direction (decided 2026-08-14)
+Pivot: hackathon demo → real multi-tenant SaaS. Driving milestone: **one design
+partner using it on their own customer data.** Full spec (local-only, gitignored):
+`docs/superpowers/specs/2026-08-14-production-platform-design.md`.
+
+**Phase 1.1 is BUILT:** Postgres + SQLAlchemy Core + Alembic, `TENANT_ID` on
+all six tables, tenant-scoped composite idempotency key, tests run on real
+Postgres. **Phases 1.2 onward remain DESIGNED, NOT YET BUILT** — no Clerk
+auth, no Procrastinate jobs, no per-tenant `get_graph_deps()`, no live mode.
+Treat everything below this point as direction for those phases, not current
+state, unless noted otherwise above.
+
+Locked stack: Postgres + Alembic + SQLAlchemy Core (deliberate SQL retained, not
+the ORM) · Clerk auth · **Procrastinate** for jobs (NOT Celery — transactional
+enqueue, no Redis service) · Railway (web + worker + Postgres) · shared tables
+with `TENANT_ID` · no billing until a buyer exists.
+
+Invariants for the productized system:
+- **Two modes, one graph** — an `OutcomeSource` seam. Sandbox = today's oracle
+  (instant); live = real channel + delayed ingested outcome. `graph/nodes.py`
+  currently calls `deps.oracle.outcome()` inline; live mode splits the graph at
+  `act` and makes the bandit delayed-feedback.
+- **Never build per-vertical simulators.** Generalize the *schema*, not the
+  simulator — other verticals get a sandbox by replaying their own uploaded data.
+- **Idempotency keys must include `TENANT_ID`** — DONE in Phase 1.1. The old
+  `customer_id:campaign_id:arm` key was a global PK and collided across tenants,
+  silently suppressing a real offer. `idempotency_key()` now hashes
+  `tenant_id:customer_id:campaign_id:arm` and `FULFILLMENTS`' PK is composite
+  `("TENANT_ID","IDEMPOTENCY_KEY")`. The same rule binds any NEW cross-tenant key:
+  LangGraph `thread_id` is likewise `tenant_id:customer_id:campaign_id`.
+- **No process singletons.** `get_graph_deps()` becomes per-tenant with a
+  *bounded* cache — each entry holds LightGBM models plus a population.
+- Anti-circularity survives the pivot: on real data the same hardchecks become
+  train/serve leakage defense. `sim_params.yaml` stays frozen (sandbox only).
+
+Phases: 1 platform foundations · 2 product shell (replaces the demo frontend) ·
+3 real-data ingestion · 4 live mode · 5 multi-vertical (parked) · 6 billing (parked).
+
+**Decided 2026-08-14** — tests move to **real Postgres** (docker-compose locally,
+GH Actions service container), retiring the `:memory:` SQLite rule. Reason: two
+SQL dialects would diverge exactly where Phase 1 is riskiest (tenant-scoped
+composite idempotency key, `ON CONFLICT`, RLS). "No network in tests" is
+unaffected — LLM calls stay mocked.
