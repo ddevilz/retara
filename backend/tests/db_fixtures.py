@@ -53,6 +53,19 @@ def _truncate_all(conn: Connection) -> None:
         conn.commit()
 
 
+def _seed_test_orgs(conn: Connection) -> None:
+    """Both test tenants must exist before any test writes tenant-scoped rows."""
+    for tenant in (TENANT_A, TENANT_B):
+        conn.execute(
+            text(
+                'INSERT INTO "ORGANIZATIONS" ("ID", "NAME") VALUES (:id, :name) '
+                'ON CONFLICT ("ID") DO NOTHING'
+            ),
+            {"id": tenant, "name": f"Test org {tenant}"},
+        )
+    conn.commit()
+
+
 @pytest.fixture
 def db_conn(migrated_db) -> Connection:
     """A connection whose tables are emptied after every test.
@@ -66,6 +79,7 @@ def db_conn(migrated_db) -> Connection:
     conn = get_engine().connect()
     _truncate_all(conn)           # first test of a run must not inherit rows
                                    # left by a prior run that crashed mid-test
+    _seed_test_orgs(conn)         # AFTER the truncate, or it wipes what we just seeded
     try:
         yield conn
     finally:
