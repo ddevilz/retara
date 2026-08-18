@@ -24,7 +24,12 @@ from __future__ import annotations
 import os
 
 from clerk_backend_api.security import VerifyTokenOptions, verify_token as clerk_verify
+from fastapi import Header, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+
+from magenta.db import get_conn
 
 
 class AuthError(Exception):
@@ -90,3 +95,53 @@ def verify_token(token: str) -> ClerkClaims:
         )
     except Exception as exc:  # SDK/payload failures alike mean "not authenticated"
         raise AuthError("invalid token") from exc
+
+
+def ensure_org(conn: Connection, org_id: str, name: str) -> None:
+    """Get-or-create the tenant row on first authenticated request.
+
+    This replaces a Clerk webhook sync: the first time anyone from an organization
+    calls the API, the tenant exists. No webhook endpoint, no reconciliation job,
+    no drift between Clerk and our registry.
+
+    Commits its own transaction. Phase 1.4 (Procrastinate) will revisit this: the
+    org insert and a provisioning-job enqueue need to share one transaction (a
+    transactional outbox), so this will stop committing and let the caller manage
+    the boundary. Not built yet because the job system doesn't exist yet.
+    """
+    conn.execute(
+        text(
+            'INSERT INTO "ORGANIZATIONS" ("ID", "NAME") VALUES (:id, :name) '
+            'ON CONFLICT ("ID") DO NOTHING'
+        ),
+        {"id": org_id, "name": name},
+    )
+    conn.commit()
+
+
+async def current_tenant(
+    authorization: str | None = Header(None),
+) -> TenantContext:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization.removeprefix("Bearer ").strip()
+
+    try:
+        claims = verify_token(token)
+    except AuthError:
+        raise HTTPException(status_code=401, detail="invalid token") from None
+
+    if not claims.org_id:
+        raise HTTPException(
+            status_code=403,
+            detail="no active organization; select one to continue",
+        )
+
+    with get_conn() as conn:
+        ensure_org(conn, claims.org_id, claims.org_id)
+
+    return TenantContext(
+        tenant_id=claims.org_id,
+        user_id=claims.user_id,
+        role=claims.org_role or "org:member",
+    )
