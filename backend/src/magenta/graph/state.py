@@ -60,7 +60,6 @@ class GuardrailVerdict(BaseModel):
 
 
 class OverallState(TypedDict):
-    tenant_id: str
     customer_id: str
     campaign_id: str
     consent_flags: dict
