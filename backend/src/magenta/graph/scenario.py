@@ -287,7 +287,7 @@ def run_scenario(customer_kwargs: dict, hidden_kwargs: dict, holdout: bool = Fal
         }
         final = graph.invoke(
             init_state,
-            config={"configurable": {"thread_id": f"{customer.customer_id}:{_CAMPAIGN_ID}"}},
+            config={"configurable": {"thread_id": f"{deps.tenant_id}:{customer.customer_id}:{_CAMPAIGN_ID}"}},
         )
 
     risk_report = final.get("risk")

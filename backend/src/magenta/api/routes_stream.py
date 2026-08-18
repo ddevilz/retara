@@ -75,7 +75,7 @@ async def run_one(req: RunOneRequest):
             "requires_approval": False,
             "holdout": False,
         }
-        config = {"configurable": {"thread_id": f"{customer.customer_id}:{_CAMPAIGN_ID}"}}
+        config = {"configurable": {"thread_id": f"{deps.tenant_id}:{customer.customer_id}:{_CAMPAIGN_ID}"}}
 
         def _iter_updates(sink):
             for chunk in graph.stream(initial, config=config, stream_mode=["updates"]):

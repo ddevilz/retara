@@ -38,7 +38,7 @@ class AgentPolicy:
         self.deps.load_customer = lambda cid, _c=c: _c
         final = self._graph.invoke(
             self._init_state(c),
-            config={"configurable": {"thread_id": f"{c.customer_id}:{self.deps.campaign_id}"}},
+            config={"configurable": {"thread_id": f"{self.deps.tenant_id}:{c.customer_id}:{self.deps.campaign_id}"}},
         )
         persist_audit(self.deps.conn, self.deps.tenant_id, final.get("audit_log", []))
         verdict = final.get("verdict")

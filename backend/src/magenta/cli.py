@@ -554,7 +554,7 @@ def run_one(customer_id: str,
                 "requires_approval": False, "holdout": holdout,
             }
             final = graph.invoke(
-                init, config={"configurable": {"thread_id": f"{customer.customer_id}:{campaign}"}})
+                init, config={"configurable": {"thread_id": f"{deps.tenant_id}:{customer.customer_id}:{campaign}"}})
         persist_audit(conn, deps.tenant_id, final.get("audit_log", []))
         deps.bandit.save(conn, deps.tenant_id)
     _pretty(final)

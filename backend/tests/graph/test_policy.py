@@ -6,7 +6,7 @@ import magenta.graph.nodes as nodes_mod
 from magenta.graph.build import GraphDeps
 from magenta.graph.policy import AgentPolicy
 from magenta.offers import Arm, OfferDecision
-from tests.db_fixtures import TENANT_A
+from tests.db_fixtures import TENANT_A, TENANT_B
 
 
 def _deps(customer, fakes, spy_chat, conn, tenant_id=TENANT_A):
@@ -54,6 +54,29 @@ def test_agent_policy_none_on_reject(customer, fakes, spy_chat, monkeypatch, db_
     fakes["catalog"]._cost = 20.0     # margin 2 < 5 => REJECT
     pol = AgentPolicy(_deps(customer, fakes, spy_chat, db_conn))
     assert pol.decide(customer) is None
+
+
+def test_thread_id_is_tenant_scoped(customer, fakes, spy_chat, monkeypatch, db_conn):
+    """Same customer_id + campaign_id under two tenants must resolve to two
+    different checkpointer threads. Pre-fix, thread_id = f"{customer_id}:
+    {campaign_id}" collided across tenants -- with the Task 10 PostgresSaver
+    that means tenant B's run RESUMES tenant A's persisted checkpoint,
+    silently leaking A's offer/diagnosis/verdict into B's response."""
+    monkeypatch.setattr(nodes_mod, "featurize", lambda c: [0.0])
+    seen_thread_ids = []
+    for tenant in (TENANT_A, TENANT_B):
+        pol = AgentPolicy(_deps(customer, fakes, spy_chat, db_conn, tenant_id=tenant))
+        real_invoke = pol._graph.invoke
+
+        def spy_invoke(state, config, _real=real_invoke):
+            seen_thread_ids.append(config["configurable"]["thread_id"])
+            return _real(state, config=config)
+
+        monkeypatch.setattr(pol._graph, "invoke", spy_invoke)
+        pol.decide(customer)
+
+    assert len(seen_thread_ids) == 2
+    assert seen_thread_ids[0] != seen_thread_ids[1]
 
 
 def test_decide_returns_none_on_no_action_collapse(customer, fakes, spy_chat, monkeypatch, db_conn):

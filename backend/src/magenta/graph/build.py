@@ -9,7 +9,7 @@ state machine):
     guardrail --(pass/needs_approval?)--> act | END   # REJECT stops here
     act -> outcome -> END
 
-thread_id = f"{customer_id}:{campaign_id}". PostgresSaver checkpointer against
+thread_id = f"{tenant_id}:{customer_id}:{campaign_id}". PostgresSaver checkpointer against
 DATABASE_URL (short-term per-thread memory). Pass checkpointer=None in GraphDeps
 to use an in-memory saver (tests).
 
