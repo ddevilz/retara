@@ -230,7 +230,6 @@ def experiment(
         with get_conn() as conn:
             _, hidden = generate_population(n=n, seed=seed)
             bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-            bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
             sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
             deps = GraphDeps(
                 risk=_load_or_train_risk(seed),
@@ -241,6 +240,7 @@ def experiment(
                 conn=conn, params=_GraphParams(), chat=_ChatShim(),
                 load_customer=lambda cid: None,
             )
+            bandit.load(conn, deps.tenant_id)  # no-op prior if no rows yet
             sc = run_experiment(make_policy(policy, deps), n=n, seed=seed, budget=budget)
     else:
         sc = run_experiment(make_policy(policy, deps), n=n, seed=seed, budget=budget)
@@ -273,9 +273,8 @@ def ablation(
             conn = stack.enter_context(get_conn())
             _, hidden = generate_population(n=n_, seed=seed_)
             bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed_)
-            bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
             sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
-            return GraphDeps(
+            deps = GraphDeps(
                 risk=_load_or_train_risk(seed_),
                 uplift=_load_or_train_uplift(seed_),
                 bandit=bandit,
@@ -284,6 +283,8 @@ def ablation(
                 conn=conn, params=_GraphParams(), chat=_ChatShim(),
                 load_customer=lambda cid: None,
             )
+            bandit.load(conn, deps.tenant_id)  # no-op prior if no rows yet
+            return deps
 
         ladder = run_ladder(n=n, seed=seed, deps_factory=deps_factory)
 
@@ -532,7 +533,6 @@ def run_one(customer_id: str,
 
     with get_conn() as conn:
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-        bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
         deps = GraphDeps(
             risk=_load_or_train_risk(seed),
@@ -543,6 +543,7 @@ def run_one(customer_id: str,
             conn=conn, params=_GraphParams(), chat=_ChatShim(),
             load_customer=lambda cid: customer,
         )
+        bandit.load(conn, deps.tenant_id)  # no-op prior if no rows yet
         with open_postgres_saver() as saver:
             deps.checkpointer = saver
             graph = build_graph(deps)
@@ -588,7 +589,6 @@ def chat_cmd(
 
     with get_conn() as conn:
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-        bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
         deps = GraphDeps(
             risk=_load_or_train_risk(seed),
@@ -600,6 +600,7 @@ def chat_cmd(
             load_customer=lambda cid: by_id.get(cid, target),
             campaign_id="CHAT",
         )
+        bandit.load(conn, deps.tenant_id)  # no-op prior if no rows yet
 
         if human:
             result = run_negotiation(deps, target, persona=None)

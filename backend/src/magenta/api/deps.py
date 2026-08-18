@@ -108,6 +108,8 @@ def get_graph_deps() -> GraphDeps:
     conn = get_conn()
     _, hidden = generate_population(DEMO_POP_N, seed=seed)
     bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
+    # DEFAULT_TENANT_ID: no per-tenant get_graph_deps(tenant_id) yet -- Phase 1.3
+    # replaces this with the tenant_id argument that call gets.
     bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
     sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
     return GraphDeps(
