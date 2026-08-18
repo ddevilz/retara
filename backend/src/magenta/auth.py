@@ -137,6 +137,9 @@ async def current_tenant(
             detail="no active organization; select one to continue",
         )
 
+    # ponytail: unconditional upsert on every authenticated request. Negligible at
+    # current scale; if it shows up in a profile, skip the write once the org is
+    # known-present (a bounded TTL cache, as Phase 1.3 uses for deps).
     with get_conn() as conn:
         ensure_org(conn, claims.org_id, claims.org_id)
 

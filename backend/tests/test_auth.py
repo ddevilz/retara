@@ -1,6 +1,6 @@
 """verify_token is the single seam we mock, mirroring how magenta.llm.chat is mocked.
 No test here reaches Clerk."""
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 from fastapi import HTTPException
@@ -90,8 +90,9 @@ async def test_valid_org_token_yields_tenant_context():
         user_id="user_1", org_id="org_xyz", org_role="org:admin", session_id="s"
     )
     with patch("magenta.auth.verify_token", return_value=claims), \
-         patch("magenta.auth.ensure_org"):
+         patch("magenta.auth.ensure_org") as mock_ensure_org:
         ctx = await current_tenant(authorization="Bearer good.token")
+    mock_ensure_org.assert_called_once_with(ANY, "org_xyz", "org_xyz")
     assert ctx.tenant_id == "org_xyz"
     assert ctx.user_id == "user_1"
     assert ctx.role == "org:admin"
