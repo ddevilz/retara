@@ -39,6 +39,23 @@ def test_two_tenants_same_customer_id_both_fulfill(db_conn):
     assert fulfillment_for(db_conn, TENANT_B, key_a) is None, "tenant B must not see A's row"
 
 
+def test_same_literal_key_isolated_by_composite_primary_key(db_conn):
+    """The actual invariant this branch is named for: FULFILLMENTS' primary
+    key is (TENANT_ID, IDEMPOTENCY_KEY), not IDEMPOTENCY_KEY alone. Insert the
+    SAME literal key under two tenants and both rows must persist
+    independently -- proving isolation without leaning on idempotency_key's
+    own tenant-hashing to manufacture different keys."""
+    same_key = "not-a-hash-just-a-literal-key"
+    insert_fulfillment(
+        db_conn, TENANT_A, same_key, "CUST_0001", "CAMP-1", "BILL_CREDIT", 8.0, "FULFILLED"
+    )
+    insert_fulfillment(
+        db_conn, TENANT_B, same_key, "CUST_0001", "CAMP-1", "BILL_CREDIT", 8.0, "FULFILLED"
+    )
+    assert fulfillment_for(db_conn, TENANT_A, same_key) is not None
+    assert fulfillment_for(db_conn, TENANT_B, same_key) is not None
+
+
 def test_insert_fulfillment_is_idempotent_within_a_tenant(db_conn):
     key = idempotency_key(TENANT_A, "CUST_0002", "CAMP-1", Arm.DATA_BOOST)
     first = insert_fulfillment(
