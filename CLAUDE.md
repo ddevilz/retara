@@ -96,9 +96,12 @@ Invariants for the productized system:
   `act` and makes the bandit delayed-feedback.
 - **Never build per-vertical simulators.** Generalize the *schema*, not the
   simulator — other verticals get a sandbox by replaying their own uploaded data.
-- **Idempotency keys must include `TENANT_ID`.** Today's
-  `customer_id:campaign_id:arm` key is a global PK and collides across tenants,
-  silently suppressing a real offer. Fix before a second tenant exists.
+- **Idempotency keys must include `TENANT_ID`** — DONE in Phase 1.1. The old
+  `customer_id:campaign_id:arm` key was a global PK and collided across tenants,
+  silently suppressing a real offer. `idempotency_key()` now hashes
+  `tenant_id:customer_id:campaign_id:arm` and `FULFILLMENTS`' PK is composite
+  `("TENANT_ID","IDEMPOTENCY_KEY")`. The same rule binds any NEW cross-tenant key:
+  LangGraph `thread_id` is likewise `tenant_id:customer_id:campaign_id`.
 - **No process singletons.** `get_graph_deps()` becomes per-tenant with a
   *bounded* cache — each entry holds LightGBM models plus a population.
 - Anti-circularity survives the pivot: on real data the same hardchecks become
