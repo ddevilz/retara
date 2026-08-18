@@ -30,6 +30,15 @@ def test_verify_token_wraps_sdk_failure():
             verify_token("some.jwt.token")
 
 
+def test_verify_token_rejects_malformed_payload():
+    """A payload missing 'sub' must surface as AuthError, not a bare KeyError —
+    this is the security boundary; nothing downstream should see a raw SDK/parsing
+    exception."""
+    with patch("magenta.auth._sdk_verify", return_value={}):
+        with pytest.raises(AuthError):
+            verify_token("some.jwt.token")
+
+
 def test_tenant_context_shape():
     t = TenantContext(tenant_id="org_1", user_id="user_1", role="org:admin")
     assert t.tenant_id == "org_1"

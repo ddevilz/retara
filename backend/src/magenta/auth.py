@@ -22,9 +22,7 @@ see task-1-report.md.
 from __future__ import annotations
 
 import os
-from functools import lru_cache
 
-from clerk_backend_api import Clerk
 from clerk_backend_api.security import VerifyTokenOptions, verify_token as clerk_verify
 from pydantic import BaseModel
 
@@ -65,13 +63,10 @@ def _authorized_parties() -> list[str]:
     return parties
 
 
-@lru_cache(maxsize=1)
-def get_clerk() -> Clerk:
-    return Clerk(bearer_auth=_secret_key())
-
-
 def _sdk_verify(token: str) -> dict:
-    """Networkless verification against the instance public key. Isolated as its own
+    """Verification against the instance's signing key. Networkless once that key is
+    cached locally; on a cache miss (e.g. key rotation, unseen `kid`) the SDK fetches
+    JWKS from Clerk over HTTPS and caches the PEM by `kid`. Isolated as its own
     function so tests patch exactly this and nothing else."""
     return clerk_verify(
         token,
@@ -87,11 +82,11 @@ def verify_token(token: str) -> ClerkClaims:
         raise AuthError("missing token")
     try:
         payload = _sdk_verify(token)
-    except Exception as exc:  # SDK raises several types; all mean "not authenticated"
+        return ClerkClaims(
+            user_id=payload["sub"],
+            org_id=payload.get("org_id"),
+            org_role=payload.get("org_role"),
+            session_id=payload.get("sid", ""),
+        )
+    except Exception as exc:  # SDK/payload failures alike mean "not authenticated"
         raise AuthError("invalid token") from exc
-    return ClerkClaims(
-        user_id=payload["sub"],
-        org_id=payload.get("org_id"),
-        org_role=payload.get("org_role"),
-        session_id=payload.get("sid", ""),
-    )
