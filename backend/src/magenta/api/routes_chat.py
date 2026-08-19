@@ -40,7 +40,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 import anyio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from magenta.api import chat_sessions as cs
@@ -48,6 +48,7 @@ from magenta.api.data_access import DEMO_POP_N, DEMO_POP_SEED
 from magenta.api.deps import get_graph_deps
 from magenta.api.schemas import ChatStartRequest, ChatStartResponse, ChatTurnRequest
 from magenta.api.sse import sse_event
+from magenta.auth import TenantContext, current_tenant
 from magenta.chat.agent import RetentionChat
 from magenta.chat.persona import Archetype, make_persona
 from magenta.graph import diagnose, sense
@@ -96,7 +97,10 @@ def _build_chat(customer):
 
 
 @router.post("/start", response_model=ChatStartResponse)
-def chat_start(req: ChatStartRequest) -> ChatStartResponse:
+def chat_start(
+    req: ChatStartRequest,
+    tenant: TenantContext = Depends(current_tenant),
+) -> ChatStartResponse:
     if req.mode == "persona" and not req.archetype:
         raise HTTPException(422, "archetype required for persona mode")
     customer = _pick_customer(req.customer_id)
@@ -132,7 +136,11 @@ def chat_start(req: ChatStartRequest) -> ChatStartResponse:
 
 
 @router.post("/{session_id}/turn")
-async def chat_turn(session_id: str, req: ChatTurnRequest):
+async def chat_turn(
+    session_id: str,
+    req: ChatTurnRequest,
+    tenant: TenantContext = Depends(current_tenant),
+):
     session = cs.get(session_id)
     if session is None:
         raise HTTPException(404, f"unknown session {session_id}")
