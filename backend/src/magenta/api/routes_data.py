@@ -17,6 +17,8 @@ router = APIRouter(prefix="/api", tags=["data"])
 
 @router.get("/scorecards", response_model=Scorecards)
 def scorecards(tenant: TenantContext = Depends(current_tenant)) -> Scorecards:
+    # tenant is unused until Phase 1.3 makes the population per-tenant. Removing this
+    # parameter removes authentication from this route.
     return da.load_scorecards()
 
 
@@ -26,6 +28,8 @@ def customers(
     search: str = Query(""),
     tenant: TenantContext = Depends(current_tenant),
 ) -> list[CustomerSummary]:
+    # tenant is unused until Phase 1.3 makes the population per-tenant. Removing this
+    # parameter removes authentication from this route.
     return da.list_customers(limit=limit, search=search)
 
 
