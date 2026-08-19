@@ -119,9 +119,14 @@ def ensure_org(conn: Connection, org_id: str, name: str) -> None:
     conn.commit()
 
 
-async def current_tenant(
+def current_tenant(
     authorization: str | None = Header(None),
 ) -> TenantContext:
+    """Sync on purpose: this does a blocking psycopg INSERT+commit (`ensure_org`)
+    and `verify_token` can do a blocking HTTPS JWKS fetch on a `kid` cache miss.
+    An `async def` here would run that I/O directly on the event loop and stall
+    every in-flight SSE stream; FastAPI runs a sync dependency in the threadpool
+    automatically."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.removeprefix("Bearer ").strip()

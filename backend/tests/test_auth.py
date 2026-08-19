@@ -51,47 +51,42 @@ def test_tenant_context_shape():
     assert t.tenant_id == "org_1"
 
 
-@pytest.mark.asyncio
-async def test_missing_header_is_401():
+def test_missing_header_is_401():
     with pytest.raises(HTTPException) as exc:
-        await current_tenant(authorization=None)
+        current_tenant(authorization=None)
     assert exc.value.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_non_bearer_header_is_401():
+def test_non_bearer_header_is_401():
     with pytest.raises(HTTPException) as exc:
-        await current_tenant(authorization="Basic abc123")
+        current_tenant(authorization="Basic abc123")
     assert exc.value.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_invalid_token_is_401():
+def test_invalid_token_is_401():
     with patch("magenta.auth.verify_token", side_effect=AuthError("nope")):
         with pytest.raises(HTTPException) as exc:
-            await current_tenant(authorization="Bearer bad.token")
+            current_tenant(authorization="Bearer bad.token")
     assert exc.value.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_authenticated_without_org_is_403():
+def test_authenticated_without_org_is_403():
     """A real Clerk user who has not selected an active organization. Authenticated, but
     there is no tenant to act as -- 403, not 401, and never a 500."""
     claims = ClerkClaims(user_id="user_1", org_id=None, org_role=None, session_id="s")
     with patch("magenta.auth.verify_token", return_value=claims):
         with pytest.raises(HTTPException) as exc:
-            await current_tenant(authorization="Bearer good.token")
+            current_tenant(authorization="Bearer good.token")
     assert exc.value.status_code == 403
 
 
-@pytest.mark.asyncio
-async def test_valid_org_token_yields_tenant_context():
+def test_valid_org_token_yields_tenant_context():
     claims = ClerkClaims(
         user_id="user_1", org_id="org_xyz", org_role="org:admin", session_id="s"
     )
     with patch("magenta.auth.verify_token", return_value=claims), \
          patch("magenta.auth.ensure_org") as mock_ensure_org:
-        ctx = await current_tenant(authorization="Bearer good.token")
+        ctx = current_tenant(authorization="Bearer good.token")
     mock_ensure_org.assert_called_once_with(ANY, "org_xyz", "org_xyz")
     assert ctx.tenant_id == "org_xyz"
     assert ctx.user_id == "user_1"
