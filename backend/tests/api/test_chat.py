@@ -29,7 +29,7 @@ class _FakeChat:
 @pytest.fixture(autouse=True)
 def _reset_and_patch(monkeypatch):
     cs.clear()
-    monkeypatch.setattr(rc, "_build_chat", lambda customer: _FakeChat())
+    monkeypatch.setattr(rc, "_build_chat", lambda customer, tenant_id: _FakeChat())
 
     class _C:
         customer_id = "CUST-DEMO"

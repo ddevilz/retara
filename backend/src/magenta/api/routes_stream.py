@@ -20,6 +20,8 @@ Two brief-bug fixes applied on sight, beyond the ones called out in the task:
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import anyio
 from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
@@ -61,7 +63,7 @@ async def run_one(
             yield sse_event("done", {"customer_id": req.customer_id})
             return
 
-        deps = get_graph_deps()
+        deps = replace(get_graph_deps(), tenant_id=tenant_id)
         graph = build_graph(deps)
         # The graph is sync (langgraph .stream). Run it off the event loop so we
         # don't block; forward each node update as an SSE 'node' event.
@@ -118,7 +120,8 @@ async def experiment(
                                       "n": req.n, "seed": req.seed})
 
         def _run():
-            deps = get_graph_deps() if req.policy in _DEPS_REQUIRED_POLICIES else None
+            deps = (replace(get_graph_deps(), tenant_id=tenant.tenant_id)
+                    if req.policy in _DEPS_REQUIRED_POLICIES else None)
             policy = make_policy(req.policy, deps)
             return run_experiment(policy, req.n, req.seed)
 

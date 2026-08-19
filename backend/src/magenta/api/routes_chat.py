@@ -37,6 +37,7 @@ Brief bugs fixed on sight (beyond the ones called out in the task):
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
 
 import anyio
@@ -78,7 +79,7 @@ def _pick_customer(customer_id: str | None):
     return customers[0]  # default demo customer
 
 
-def _build_chat(customer):
+def _build_chat(customer, tenant_id: str):
     """Build a RetentionChat with a *real* report+diagnosis, driving the same
     sense/diagnose node functions the decision graph and negotiation runner
     use (mirrors `magenta.chat.runner._build_context`) instead of forking a
@@ -88,8 +89,14 @@ def _build_chat(customer):
     true here because both populations share DEMO_POP_N/SEED and
     `generate_population` is a seeded, deterministic function (CLAUDE.md:
     "same seed -> identical output"), so the same id always yields an
-    equal Customer either way."""
-    deps = get_graph_deps()
+    equal Customer either way.
+
+    `tenant_id` rebinds the cached GraphDeps singleton's tenant field per
+    request (see routes_stream.py's `replace(...)` — same fix, same reason:
+    the session's RetentionChat later reaches `act()` on this deps object via
+    `chat/agent.py`, which must not write FULFILLMENTS/GUARDRAIL_CONTACTS
+    under the process-default tenant)."""
+    deps = replace(get_graph_deps(), tenant_id=tenant_id)
     state: dict = {"customer_id": customer.customer_id}
     state.update(sense(state, deps))
     state.update(diagnose(state, deps))
@@ -107,7 +114,7 @@ def chat_start(
     if customer is None:
         raise HTTPException(404, f"unknown customer {req.customer_id}")
 
-    chat_agent = _build_chat(customer)
+    chat_agent = _build_chat(customer, tenant.tenant_id)
 
     persona = None
     if req.mode == "persona":
