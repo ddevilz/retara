@@ -37,6 +37,23 @@ def test_verify_token_wraps_sdk_failure():
             verify_token("some.jwt.token")
 
 
+def test_verify_token_propagates_misconfiguration():
+    """Missing CLERK_SECRET_KEY / CLERK_AUTHORIZED_PARTIES must surface as a
+    RuntimeError (-> 500), not be swallowed into AuthError (-> 401). Failing
+    closed is right; failing silently is not."""
+    with patch("magenta.auth._sdk_verify", side_effect=RuntimeError("CLERK_SECRET_KEY is not set")):
+        with pytest.raises(RuntimeError):
+            verify_token("some.jwt.token")
+
+
+def test_current_tenant_misconfiguration_is_not_401():
+    """A misconfigured deploy must not look like a bad token: current_tenant's
+    except AuthError must not catch the RuntimeError from a missing env var."""
+    with patch("magenta.auth.verify_token", side_effect=RuntimeError("CLERK_AUTHORIZED_PARTIES is not set")):
+        with pytest.raises(RuntimeError):
+            current_tenant(authorization="Bearer some.jwt.token")
+
+
 def test_verify_token_rejects_malformed_payload():
     """A payload missing 'sub' must surface as AuthError, not a bare KeyError —
     this is the security boundary; nothing downstream should see a raw SDK/parsing

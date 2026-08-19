@@ -87,13 +87,22 @@ def verify_token(token: str) -> ClerkClaims:
         raise AuthError("missing token")
     try:
         payload = _sdk_verify(token)
+    except RuntimeError:
+        # Missing CLERK_SECRET_KEY / CLERK_AUTHORIZED_PARTIES: a misconfigured
+        # deploy, not an invalid token. Must NOT be caught by the generic
+        # except below -- that would surface as a silent 401 on every request
+        # with no log line anywhere. Let it propagate to a 500 instead.
+        raise
+    except Exception as exc:  # SDK/payload failures alike mean "not authenticated"
+        raise AuthError("invalid token") from exc
+    try:
         return ClerkClaims(
             user_id=payload["sub"],
             org_id=payload.get("org_id"),
             org_role=payload.get("org_role"),
             session_id=payload.get("sid", ""),
         )
-    except Exception as exc:  # SDK/payload failures alike mean "not authenticated"
+    except Exception as exc:  # malformed payload (missing 'sub', etc.)
         raise AuthError("invalid token") from exc
 
 
