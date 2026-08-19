@@ -122,6 +122,7 @@ def chat_start(
     sid = cs.new_id()
     cs.create(cs.ChatSession(
         session_id=sid,
+        tenant_id=tenant.tenant_id,
         mode=req.mode,
         customer_id=getattr(customer, "customer_id", "CUST-DEMO"),
         archetype=req.archetype,
@@ -141,7 +142,7 @@ async def chat_turn(
     req: ChatTurnRequest,
     tenant: TenantContext = Depends(current_tenant),
 ):
-    session = cs.get(session_id)
+    session = cs.get(session_id, tenant.tenant_id)
     if session is None:
         raise HTTPException(404, f"unknown session {session_id}")
 

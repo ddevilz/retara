@@ -14,6 +14,7 @@ from typing import Optional
 @dataclass
 class ChatSession:
     session_id: str
+    tenant_id: str
     mode: str                 # "persona" | "human"
     customer_id: str
     archetype: Optional[str]
@@ -29,8 +30,13 @@ def create(session: ChatSession) -> None:
     _SESSIONS[session.session_id] = session
 
 
-def get(session_id: str) -> Optional[ChatSession]:
-    return _SESSIONS.get(session_id)
+def get(session_id: str, tenant_id: str) -> Optional[ChatSession]:
+    """Tenant mismatch is indistinguishable from "not found" by design — a caller
+    must not be able to probe for the existence of another tenant's sessions."""
+    session = _SESSIONS.get(session_id)
+    if session is None or session.tenant_id != tenant_id:
+        return None
+    return session
 
 
 def new_id() -> str:

@@ -4,6 +4,7 @@ import pytest
 
 from magenta.api import chat_sessions as cs
 from magenta.api import routes_chat as rc
+from tests.db_fixtures import TENANT_A
 
 
 class _FakeReply:
@@ -92,13 +93,13 @@ async def test_chat_session_persists_across_two_turns(client):
     start = await client.post("/api/chat/start",
                               json={"mode": "human", "customer_id": "CUST-DEMO"})
     sid = start.json()["session_id"]
-    session = cs.get(sid)
+    session = cs.get(sid, TENANT_A)
     fake_chat = session.chat
 
     await client.post(f"/api/chat/{sid}/turn", json={"text": "first"})
     await client.post(f"/api/chat/{sid}/turn", json={"text": "second"})
 
-    assert cs.get(sid).chat is fake_chat
+    assert cs.get(sid, TENANT_A).chat is fake_chat
     assert fake_chat.calls == 2
 
 
