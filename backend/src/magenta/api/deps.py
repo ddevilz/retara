@@ -85,6 +85,7 @@ def get_graph_deps(tenant_id: str) -> GraphDeps:
         params=_GraphParams(),
         chat=_ChatShim(),
         load_customer=pop.customers.get,
+        tenant_id=tenant_id,
     )
     DEPS_CACHE.put(tenant_id, deps)
     return deps

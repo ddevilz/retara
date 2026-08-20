@@ -15,9 +15,9 @@ Brief bugs fixed on sight (beyond the ones called out in the task):
    from `magenta.api.population.get_population(tenant_id)` instead of its own
    module-level `@lru_cache(maxsize=1)` demo population — that cache and
    `data_access`'s and `deps`'s identically-seeded copies were the same bug
-   three times (CLAUDE.md, Phase 1.3 build ledger). `deps.py` itself still
-   loads its own process-wide DEMO_POP_SEED=7 population (Task 4's job to
-   fix) — see `_build_chat`'s note below for the resulting mismatch.
+   three times (CLAUDE.md, Phase 1.3 build ledger). `deps.py` (Task 4) now
+   also resolves through `get_population(tenant_id)`, so `_build_chat` below
+   gets a Customer whose scored attributes match this tenant's population.
 3. Persona construction used a function-level `from magenta.chat.persona
    import Archetype, make_persona` — this repo's hard rule is "all imports
    at module top, no function-level imports ever" (CLAUDE.md). Hoisted.
@@ -34,8 +34,6 @@ Brief bugs fixed on sight (beyond the ones called out in the task):
    is supplied by the caller regardless of mode). Fixed in chat_sessions.py.
 """
 from __future__ import annotations
-
-from dataclasses import replace
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException
@@ -66,21 +64,17 @@ def _build_chat(customer, tenant_id: str):
     sense/diagnose node functions the decision graph and negotiation runner
     use (mirrors `magenta.chat.runner._build_context`) instead of forking a
     second, broken copy of that scoring logic. `sense`/`diagnose` re-load the
-    customer via `deps.load_customer(customer_id)`, so this requires that id
-    to resolve on the graph's own demo population (`magenta.api.deps`, still
-    a process-wide DEMO_POP_SEED=7 population pre-Task-4). The id always
-    resolves (customer_id is index-based, not seed-based — see
-    `magenta.api.population`), but until Task 4 rewires `deps.py` onto
-    `get_population(tenant_id)` too, the re-loaded Customer's *attribute*
-    values come from the global seed-7 population, not this tenant's — a
-    known, temporary mismatch, not new to this task.
+    customer via `deps.load_customer(customer_id)`, which now (Task 4) is
+    this same tenant's own population, so the reloaded Customer's attribute
+    values match `customer` above.
 
-    `tenant_id` rebinds the cached GraphDeps singleton's tenant field per
-    request (see routes_stream.py's `replace(...)` — same fix, same reason:
-    the session's RetentionChat later reaches `act()` on this deps object via
-    `chat/agent.py`, which must not write FULFILLMENTS/GUARDRAIL_CONTACTS
-    under the process-default tenant)."""
-    deps = replace(get_graph_deps(), tenant_id=tenant_id)
+    `get_graph_deps(tenant_id)` returns this tenant's own cached GraphDeps
+    (`deps.tenant_id` already set correctly) — the session's RetentionChat
+    later reaches `act()` on this deps object via `chat/agent.py`, which must
+    not write FULFILLMENTS/GUARDRAIL_CONTACTS under the wrong tenant. May
+    raise `ModelsNotReady` -> 503 (this call happens outside any SSE
+    generator, in `chat_start`, so the exception handler sees it)."""
+    deps = get_graph_deps(tenant_id)
     state: dict = {"customer_id": customer.customer_id}
     state.update(sense(state, deps))
     state.update(diagnose(state, deps))

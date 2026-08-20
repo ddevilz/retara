@@ -36,18 +36,23 @@ def _parse_sse(text: str):
     return events
 
 
+class _FakePopulation:
+    def __init__(self, customers):
+        self.customers = customers
+
+
 @pytest.fixture
 def patched_graph(monkeypatch):
     @dataclass
     class _FakeDeps:
         tenant_id: str = "org_default"
 
-    monkeypatch.setattr(rs, "build_graph", lambda deps: _FakeGraph())
-    monkeypatch.setattr(rs, "get_graph_deps", lambda: _FakeDeps())
-
     class _C:
         customer_id = "CUST-DEMO"
-    monkeypatch.setattr(rs, "_find_customer", lambda cid: _C())
+
+    monkeypatch.setattr(rs, "build_graph", lambda deps: _FakeGraph())
+    monkeypatch.setattr(rs, "get_graph_deps", lambda tenant_id: _FakeDeps())
+    monkeypatch.setattr(rs, "get_population", lambda tenant_id: _FakePopulation({"CUST-DEMO": _C()}))
 
 
 @pytest.mark.asyncio
@@ -64,7 +69,12 @@ async def test_run_one_streams_node_events(client, patched_graph):
 
 @pytest.mark.asyncio
 async def test_run_one_unknown_customer(client, monkeypatch):
-    monkeypatch.setattr(rs, "_find_customer", lambda cid: None)
+    @dataclass
+    class _FakeDeps:
+        tenant_id: str = "org_default"
+
+    monkeypatch.setattr(rs, "get_graph_deps", lambda tenant_id: _FakeDeps())
+    monkeypatch.setattr(rs, "get_population", lambda tenant_id: _FakePopulation({}))
     resp = await client.post("/api/run-one", json={"customer_id": "NOPE-99999"})
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
