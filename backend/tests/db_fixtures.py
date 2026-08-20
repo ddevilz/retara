@@ -15,7 +15,6 @@ from sqlalchemy.engine import Connection
 from alembic import command
 from magenta.config import repo_root
 from magenta.db import get_engine
-from magenta.jobs import app as procrastinate_app
 
 TENANT_A = "org_test_aaa"
 TENANT_B = "org_test_bbb"
@@ -52,14 +51,6 @@ def migrated_db() -> None:
             ["procrastinate", "--app=magenta.jobs.app", "schema", "--apply"],
             check=True,
         )
-    # Session-scoped open/close: `.defer()` (including the sync calls `ensure_org`
-    # makes through an external connection) requires the app to be open first --
-    # confirmed empirically in tests/test_jobs.py. Tests that call `ensure_org`
-    # directly (not through the FastAPI app, whose own lifespan opens/closes it)
-    # need this done once here instead.
-    procrastinate_app.open()
-    yield
-    procrastinate_app.close()
 
 
 def _truncate_all(conn: Connection) -> None:
