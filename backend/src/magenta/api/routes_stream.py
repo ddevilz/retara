@@ -26,13 +26,15 @@ import anyio
 from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 
-from magenta.api.deps import find_customer, get_graph_deps
+from magenta.api.deps import get_graph_deps
+from magenta.api.population import get_population
 from magenta.api.schemas import ExperimentRequest, RunOneRequest
 from magenta.api.sse import sse_event
 from magenta.auth import TenantContext, current_tenant
 from magenta.experiment import run_experiment
 from magenta.graph.ablation import make_policy
 from magenta.graph.build import persist_audit, build_graph
+from magenta.graph.tables import DEFAULT_TENANT_ID
 
 router = APIRouter(prefix="/api", tags=["stream"])
 
@@ -46,7 +48,11 @@ _DEPS_REQUIRED_POLICIES = {"risk_rules", "agent_s1", "agent"}
 
 
 def _find_customer(customer_id: str):
-    return find_customer(customer_id)
+    # DEFAULT_TENANT_ID: get_graph_deps() below is still called with no tenant_id
+    # argument (Task 5 wires the request's tenant through this route) -- this lookup
+    # mirrors that same pre-Task-5 default rather than picking a different tenant for
+    # the lookup half of the request than the scoring half will use.
+    return get_population(DEFAULT_TENANT_ID).customers.get(customer_id)
 
 
 @router.post("/run-one")
