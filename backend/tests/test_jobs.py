@@ -55,3 +55,32 @@ def test_defer_with_external_connection_commits_atomically(db_conn):
         assert row is not None
     finally:
         app.close()
+
+
+def test_train_writes_both_artifacts(monkeypatch, tmp_path):
+    from magenta.jobs import train_tenant_models
+    from magenta.storage import risk_model_path, uplift_model_path
+
+    monkeypatch.setenv("MAGENTA_MODEL_DIR", str(tmp_path))
+    train_tenant_models("org_job_test", n=200)
+    assert risk_model_path("org_job_test").exists()
+    assert uplift_model_path("org_job_test").exists()
+
+
+def test_train_is_deterministic_per_tenant(monkeypatch, tmp_path):
+    from magenta.jobs import train_tenant_models
+    from magenta.storage import risk_model_path
+
+    monkeypatch.setenv("MAGENTA_MODEL_DIR", str(tmp_path))
+    train_tenant_models("org_det_job", n=200)
+    first = risk_model_path("org_det_job").read_bytes()
+    train_tenant_models("org_det_job", n=200)
+    assert risk_model_path("org_det_job").read_bytes() == first
+
+
+def test_job_is_registered_with_a_queueing_lock():
+    """Two provisioning jobs for one tenant must not train concurrently and race on
+    the same artifact path."""
+    from magenta.jobs import train_tenant_models_job
+
+    assert train_tenant_models_job.queueing_lock is not None

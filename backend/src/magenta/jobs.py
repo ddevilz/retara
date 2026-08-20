@@ -14,7 +14,12 @@ from __future__ import annotations
 
 import procrastinate
 
+from magenta.brain.risk import RiskModel
+from magenta.brain.training import build_training_data
+from magenta.brain.uplift import UpliftModel
 from magenta.db import database_url
+from magenta.storage import risk_model_path, uplift_model_path
+from magenta.tenancy import tenant_seed
 
 
 def procrastinate_conninfo() -> str:
@@ -38,3 +43,29 @@ app = procrastinate.App(
 # .defer(...)` silently routes through the unopened async app and raises AppNotOpen.)
 # Call `app.open()` once at process startup before any `.defer()` call — `App.open()`/
 # `.close()` are themselves sync methods even though the connector is async.
+
+
+def train_tenant_models(tenant_id: str, n: int = 3000) -> None:
+    """Train and persist this tenant's risk and uplift models.
+
+    A plain function, not the task itself, so the CLI and tests can call it directly
+    without a queue in the way.
+    """
+    seed = tenant_seed(tenant_id)
+    td = build_training_data(n=n, seed=seed)
+    RiskModel().fit(td.customers, td.churned).save(risk_model_path(tenant_id))
+    UpliftModel().fit(td.customers, td.treated, td.retained).save(
+        uplift_model_path(tenant_id)
+    )
+
+
+@app.task(name="train_tenant_models", queueing_lock="train_tenant_models")
+def train_tenant_models_job(tenant_id: str, n: int = 3000) -> None:
+    train_tenant_models(tenant_id, n=n)
+
+
+# ponytail: training runs in the worker process, not a subprocess. Procrastinate has no
+# worker_max_tasks_per_child, so repeated LightGBM and SHAP fits can fragment worker
+# memory over time. At a handful of tenants that is theoretical — restart the worker on
+# deploy. If RSS actually climbs, run the worker with --one-shot under a supervisor
+# before reaching for subprocess isolation.
