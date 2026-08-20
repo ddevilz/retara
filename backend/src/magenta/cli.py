@@ -450,15 +450,16 @@ class _ChatShim:
 
 
 def _load_or_train_risk(seed: int) -> RiskModel:
-    """RiskModel.load() with NO argument uses the data_dir()-anchored default
-    path (fixes the brief's cwd-relative "data/risk.pkl" bug — that literal
-    only resolves if the process cwd happens to be the repo root, but these
-    commands are documented as `cd backend && uv run magenta ...`). If the
-    artifact is missing, train a small stand-in on the fly so the manual-test
-    surface still works end to end; `magenta risk train` remains the
-    authoritative way to get a properly-sized model."""
+    """Single-tenant demo default (Phase 1.3 pre-Task-4): no tenant_id is
+    threaded through this manual-test CLI surface yet, so this keeps the old
+    shared data_dir()-anchored path as a literal here rather than inventing a
+    new default-path abstraction. Task 4 replaces this with a tenant path via
+    magenta.storage. If the artifact is missing, train a small stand-in on
+    the fly so the manual-test surface still works end to end; `magenta risk
+    train` remains the authoritative way to get a properly-sized model."""
+    path = data_dir() / "models" / "risk.joblib"
     try:
-        return RiskModel.load()
+        return RiskModel.load(path)
     except FileNotFoundError:
         typer.echo(
             "(no risk model artifact found; training a quick one on n=3000 -- "
@@ -466,13 +467,15 @@ def _load_or_train_risk(seed: int) -> RiskModel:
         )
         td = build_training_data(n=3000, seed=seed)
         model = RiskModel().fit(td.customers, td.churned)
-        model.save()
+        model.save(path)
         return model
 
 
 def _load_or_train_uplift(seed: int) -> UpliftModel:
+    """Single-tenant demo default (Phase 1.3 pre-Task-4); see _load_or_train_risk."""
+    path = data_dir() / "models" / "uplift.joblib"
     try:
-        return UpliftModel.load()
+        return UpliftModel.load(path)
     except FileNotFoundError:
         typer.echo(
             "(no uplift model artifact found; training a quick one on n=3000 -- "
@@ -480,7 +483,7 @@ def _load_or_train_uplift(seed: int) -> UpliftModel:
         )
         td = build_training_data(n=3000, seed=seed)
         model = UpliftModel().fit(td.customers, td.treated, td.retained)
-        model.save()
+        model.save(path)
         return model
 
 

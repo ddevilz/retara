@@ -27,7 +27,7 @@ from magenta.brain.features import FEATURE_NAMES
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel
-from magenta.config import configs_dir
+from magenta.config import configs_dir, data_dir
 from magenta.db import get_conn
 from magenta.graph.build import GraphDeps
 from magenta.graph.tables import DEFAULT_TENANT_ID
@@ -59,26 +59,31 @@ class _ChatShim:
 
 
 def _load_or_train_risk(seed: int) -> RiskModel:
-    """Mirrors cli.py::_load_or_train_risk. `RiskModel.load()` with no
-    argument resolves the data_dir()-anchored default path (NOT the brief's
-    cwd-relative "data/risk.pkl" literal, which only resolves if the process
-    cwd happens to be the repo root)."""
+    """Mirrors cli.py::_load_or_train_risk. Single-tenant demo default
+    (Phase 1.3 pre-Task-4): `get_graph_deps()` below is still a process-wide
+    singleton keyed on DEFAULT_TENANT_ID, so this keeps the old shared
+    data_dir()-anchored path as a literal here rather than inventing a new
+    default-path abstraction. Task 4 replaces this with a tenant path via
+    magenta.storage."""
+    path = data_dir() / "models" / "risk.joblib"
     try:
-        return RiskModel.load()
+        return RiskModel.load(path)
     except FileNotFoundError:
         td = build_training_data(n=3000, seed=seed)
         model = RiskModel().fit(td.customers, td.churned)
-        model.save()
+        model.save(path)
         return model
 
 
 def _load_or_train_uplift(seed: int) -> UpliftModel:
+    """Single-tenant demo default (Phase 1.3 pre-Task-4); see _load_or_train_risk."""
+    path = data_dir() / "models" / "uplift.joblib"
     try:
-        return UpliftModel.load()
+        return UpliftModel.load(path)
     except FileNotFoundError:
         td = build_training_data(n=3000, seed=seed)
         model = UpliftModel().fit(td.customers, td.treated, td.retained)
-        model.save()
+        model.save(path)
         return model
 
 
