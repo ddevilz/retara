@@ -22,6 +22,8 @@ from magenta.brain.uplift import Segment, UpliftModel, classify_segment
 from magenta.chat.persona import Archetype, PersonaAgent, make_persona
 from magenta.chat.runner import run_negotiation
 from magenta.config import configs_dir, data_dir, load_models
+from magenta.storage import risk_model_path, uplift_model_path
+from magenta.tenancy import tenant_seed
 from magenta.cost.cache import SemanticCache
 from magenta.cost.cascade import cascade
 from magenta.cost.meter import CostMeter
@@ -427,6 +429,29 @@ def bandit_episodes(
         typer.echo(
             f"{ep:<8} {npi:<28.2f} {share:<16.3f} {cumulative_net_margin:>22.2f}"
         )
+
+
+tenant_app = typer.Typer(help="Tenant provisioning.")
+app.add_typer(tenant_app, name="tenant")
+
+
+@tenant_app.command("provision")
+def tenant_provision_cmd(
+    tenant_id: str,
+    n: int = typer.Option(3000, help="Training population size."),
+) -> None:
+    """Train and save this tenant's risk and uplift models.
+
+    Stopgap until Phase 1.4 runs this as a background job — the logic moves wholesale
+    into the job, so keep it a plain function call, not CLI-shaped logic.
+    """
+    seed = tenant_seed(tenant_id)
+    td = build_training_data(n=n, seed=seed)
+    RiskModel().fit(td.customers, td.churned).save(risk_model_path(tenant_id))
+    UpliftModel().fit(td.customers, td.treated, td.retained).save(
+        uplift_model_path(tenant_id)
+    )
+    typer.echo(f"provisioned {tenant_id} (seed={seed}, n={n})")
 
 
 ## ---- appended by lab 6: single-customer graph walk (manual-test surface) ----
