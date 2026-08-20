@@ -33,7 +33,7 @@ def _reset_and_patch(monkeypatch):
 
     class _C:
         customer_id = "CUST-DEMO"
-    monkeypatch.setattr(rc, "_pick_customer", lambda cid: _C())
+    monkeypatch.setattr(rc, "_pick_customer", lambda tenant_id, cid: _C())
     yield
     cs.clear()
 

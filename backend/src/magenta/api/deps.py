@@ -12,16 +12,22 @@ branch that can never succeed today, so it's left out rather than special-cased.
 
 `get_graph_deps()` is cached (@lru_cache) so the risk/uplift models load once
 per process, not once per request. `find_customer()` shares one cached
-population (same DEMO_POP_N/SEED as `magenta.api.data_access`, imported from
-there rather than re-declared, so the two can never drift apart) with
-`GraphDeps.load_customer`, so any customer_id the /api/customers list serves
-also resolves for the graph.
+population (own DEMO_POP_N/SEED, defined below) with `GraphDeps.load_customer`,
+so any customer_id the /api/customers list serves also resolves for the graph.
+
+Phase 1.3 Task 3 note: `DEMO_POP_N`/`DEMO_POP_SEED` used to be imported from
+`magenta.api.data_access`, which owned the one shared demo-population seed.
+Task 3 deleted that module's population entirely (collapsed into
+`magenta.api.population`, per-tenant) — this module is untouched by Task 3
+per its own brief ("Task 4 replaces `_demo_customers`/`find_customer`"), so
+the constants are inlined here, same values, so this file keeps importing
+and behaving exactly as before until Task 4 rewires it onto
+`magenta.api.population.get_population(tenant_id)`.
 """
 from __future__ import annotations
 
 from functools import lru_cache
 
-from magenta.api.data_access import DEMO_POP_N, DEMO_POP_SEED
 from magenta.brain.bandit import ThompsonBandit
 from magenta.brain.features import FEATURE_NAMES
 from magenta.brain.risk import RiskModel
@@ -35,6 +41,14 @@ from magenta.llm import chat, chat_structured
 from magenta.offers import Arm, OfferCatalog
 from magenta.sim.oracle import ResponseOracle, SimParams
 from magenta.sim.population import Customer, generate_population
+
+
+# Population seed/size used for the demo customer directory. Must match the
+# seed the graph/experiment use so IDs line up with AUDIT_LOG rows. Formerly
+# imported from magenta.api.data_access (Task 3 deleted that copy — see
+# module docstring).
+DEMO_POP_N = 2000
+DEMO_POP_SEED = 7
 
 
 class _GraphParams:
