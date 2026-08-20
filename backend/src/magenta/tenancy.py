@@ -25,6 +25,10 @@ class BoundedTTLCache:
     maxsize bounds memory — each entry can hold two LightGBM model sets and a
     population. ttl_seconds bounds staleness — the Phase 1.4 worker retrains in a
     separate process and cannot reach into this one to invalidate.
+
+    Note: on_evict callbacks run while self._lock is held. A callback must never
+    call back into this cache (get/put/invalidate/clear) or it will deadlock —
+    threading.Lock is not reentrant.
     """
 
     def __init__(
@@ -55,6 +59,12 @@ class BoundedTTLCache:
 
     def put(self, key: str, value: Any) -> None:
         with self._lock:
+            # If key already exists, evict the old value before replacing it
+            if key in self._data:
+                _, old_value = self._data[key]
+                if self._on_evict is not None:
+                    self._on_evict(old_value)
+
             self._data[key] = (time.monotonic(), value)
             self._data.move_to_end(key)
             while len(self._data) > self._maxsize:
