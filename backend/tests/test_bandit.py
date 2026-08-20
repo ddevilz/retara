@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import pytest
 
@@ -97,3 +99,34 @@ def test_posteriors_are_tenant_isolated(db_conn):
     b = ThompsonBandit(dim=4, arms=list(Arm), seed=1)
     b.load(db_conn, TENANT_B)  # no rows for B — must stay at the prior
     assert b._n[Arm.BILL_CREDIT] == 0
+
+
+def test_load_does_not_leave_connection_in_open_transaction(db_conn):
+    """A read-only load() that never commits leaves its connection idle in
+    transaction. On a long-lived connection (api.deps.get_graph_deps()'s
+    @lru_cache singleton) that ACCESS-SHARE-locks BANDIT_POSTERIOR forever,
+    blocking any later TRUNCATE — the bug that made the full suite hang."""
+    from tests.db_fixtures import TENANT_A
+
+    b = ThompsonBandit(dim=4, arms=list(Arm), seed=1)
+    b.load(db_conn, TENANT_A)
+    assert not db_conn.in_transaction()
+
+
+def test_select_many_calls_stays_fast():
+    """select() used to draw its 101 samples per arm one at a time via
+    SVD-based multivariate_normal — ~700k SVDs for a realistic cohort run,
+    several minutes of wall clock that read as a hang under any reasonable
+    test timeout. Batching into one Cholesky-based draw per arm made 300
+    select()+update() calls take ~0.5s; this asserts a generous 5s bound for
+    200 calls so a regression back to per-draw SVD fails loudly instead of
+    reading as flakiness."""
+    arms = [Arm.BILL_CREDIT, Arm.DATA_BOOST, Arm.PLAN_DOWNSELL]
+    b = ThompsonBandit(dim=6, arms=arms, seed=2)
+    x = np.random.default_rng(0).random(6)
+
+    t0 = time.perf_counter()
+    for _ in range(200):
+        arm, _ = b.select(x, eligible=arms)
+        b.update(x, arm, reward=1.0)
+    assert time.perf_counter() - t0 < 5.0
