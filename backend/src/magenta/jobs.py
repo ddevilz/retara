@@ -28,8 +28,13 @@ app = procrastinate.App(
 # `procrastinate` (CLI: schema/worker) refuses a sync connector — confirmed by running
 # `procrastinate --app=magenta.jobs.app schema --apply` against this app, which errored
 # "The connector provided by the app is not async. Please use an async connector for the
-# procrastinate CLI." So the app itself stays async, and every sync call site (SQLAlchemy
-# Core, sync route handlers) defers jobs through this sync-connector view instead.
-sync_app = app.with_connector(
-    procrastinate.SyncPsycopgConnector(conninfo=procrastinate_conninfo())
-)
+# procrastinate CLI." So the app stays async. Sync call sites still defer synchronously
+# through this same app: PsycopgConnector supports `Task.configure(connection=...)`,
+# which runs the job INSERT on a caller-supplied psycopg connection instead of the
+# connector's own pool — that's the atomic-enqueue mechanism, not a second app. (A
+# `sync_app = app.with_connector(SyncPsycopgConnector(...))` looks tempting but is a
+# trap: `with_connector` is deprecated since Procrastinate 2.14 because the tasks it
+# returns still point back at the *original* app's blueprint, so `sync_app.tasks[...]
+# .defer(...)` silently routes through the unopened async app and raises AppNotOpen.)
+# Call `app.open()` once at process startup before any `.defer()` call — `App.open()`/
+# `.close()` are themselves sync methods even though the connector is async.
