@@ -19,6 +19,11 @@ def test_tenant_id_cannot_escape_the_model_root(monkeypatch, tmp_path):
     monkeypatch.setenv("MAGENTA_MODEL_DIR", str(tmp_path))
     with pytest.raises(ValueError):
         risk_model_path("../../etc")
+    with pytest.raises(ValueError):
+        # On Windows, model_root() / "C:evil" resolves to WindowsPath("C:evil"),
+        # silently discarding the model root -- a denylist misses this; only an
+        # allowlist of safe characters catches it.
+        risk_model_path("C:evil")
 
 
 def test_risk_model_save_requires_an_explicit_path():

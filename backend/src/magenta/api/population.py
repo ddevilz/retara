@@ -77,7 +77,7 @@ def list_customers(tenant_id: str, limit: int = 50, search: str = "") -> list[Cu
     if search:
         needle = search.lower()
         rows = [c for c in rows if needle in c.customer_id.lower()]
-    return rows[:limit]
+    return rows[: max(0, limit)]
 
 
 def get_customer(tenant_id: str, customer_id: str) -> CustomerSummary | None:

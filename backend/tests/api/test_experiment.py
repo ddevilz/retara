@@ -52,7 +52,7 @@ async def test_experiment_noaction_never_touches_deps(client, monkeypatch):
     monkeypatch.setattr(rs, "run_experiment",
                         lambda policy, n, seed: _FakeScorecard())
 
-    def _boom():
+    def _boom(tenant_id):
         raise AssertionError("get_graph_deps() should not be called for 'noaction'")
 
     monkeypatch.setattr(rs, "get_graph_deps", _boom)

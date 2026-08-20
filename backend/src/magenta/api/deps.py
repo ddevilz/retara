@@ -11,6 +11,8 @@ artifact is now `ModelsNotReady` -> 503, and provisioning is somebody else's job
 """
 from __future__ import annotations
 
+import threading
+
 from magenta.api.population import get_population
 from magenta.brain.bandit import ThompsonBandit
 from magenta.brain.features import FEATURE_NAMES
@@ -32,6 +34,19 @@ from magenta.tenancy import BoundedTTLCache, tenant_seed
 # (TTL expiry, LRU, overwrite, invalidate, clear) leaks a pooled connection forever and
 # the pool (~15 conns) exhausts after enough tenant rotation.
 DEPS_CACHE = BoundedTTLCache(maxsize=8, ttl_seconds=900, on_evict=lambda deps: deps.conn.close())
+
+# ponytail: GraphDeps owns a long-lived Connection, so an evicted entry's conn
+# closes under any holder that outlives the cache entry (a ChatSession's cached
+# deps, chiefly). Fails loud (ResourceClosedError), never corrupts. Upgrade path
+# is Phase 1.4: acquire the conn per operation instead of per tenant.
+
+# Guards cold-tenant builds below: on_evict closes the OLD connection whenever
+# DEPS_CACHE.put() overwrites a key, so two concurrent cold misses for the same
+# tenant would otherwise race -- whichever put() runs second closes the
+# connection the first request may still be using. A single global lock (not
+# per-tenant) serializes all cold builds; that's fine because a cold build is
+# already the expensive/rare path.
+_BUILD_LOCK = threading.Lock()
 
 
 class ModelsNotReady(Exception):
@@ -58,34 +73,39 @@ def get_graph_deps(tenant_id: str) -> GraphDeps:
     if cached is not None:
         return cached
 
-    try:
-        risk = RiskModel.load(risk_model_path(tenant_id))
-        uplift = UpliftModel.load(uplift_model_path(tenant_id))
-    except FileNotFoundError as exc:
-        raise ModelsNotReady(f"no trained models for tenant {tenant_id}") from exc
+    with _BUILD_LOCK:
+        cached = DEPS_CACHE.get(tenant_id)  # another thread may have won the race
+        if cached is not None:
+            return cached
 
-    seed = tenant_seed(tenant_id)
-    pop = get_population(tenant_id)
+        try:
+            risk = RiskModel.load(risk_model_path(tenant_id))
+            uplift = UpliftModel.load(uplift_model_path(tenant_id))
+        except FileNotFoundError as exc:
+            raise ModelsNotReady(f"no trained models for tenant {tenant_id}") from exc
 
-    conn = get_conn()
-    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-    bandit.load(conn, tenant_id)
+        seed = tenant_seed(tenant_id)
+        pop = get_population(tenant_id)
 
-    deps = GraphDeps(
-        risk=risk,
-        uplift=uplift,
-        bandit=bandit,
-        catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
-        oracle=ResponseOracle(
-            pop.hidden,
-            params=SimParams.load(configs_dir() / "sim_params.yaml"),
-            seed=seed,
-        ),
-        conn=conn,
-        params=_GraphParams(),
-        chat=_ChatShim(),
-        load_customer=pop.customers.get,
-        tenant_id=tenant_id,
-    )
-    DEPS_CACHE.put(tenant_id, deps)
-    return deps
+        conn = get_conn()
+        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
+        bandit.load(conn, tenant_id)
+
+        deps = GraphDeps(
+            risk=risk,
+            uplift=uplift,
+            bandit=bandit,
+            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+            oracle=ResponseOracle(
+                pop.hidden,
+                params=SimParams.load(configs_dir() / "sim_params.yaml"),
+                seed=seed,
+            ),
+            conn=conn,
+            params=_GraphParams(),
+            chat=_ChatShim(),
+            load_customer=pop.customers.get,
+            tenant_id=tenant_id,
+        )
+        DEPS_CACHE.put(tenant_id, deps)
+        return deps
