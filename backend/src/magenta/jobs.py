@@ -13,6 +13,7 @@ against it, so vendoring them into our history would break on every upgrade.
 from __future__ import annotations
 
 import procrastinate
+import procrastinate.builtin_tasks
 
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
@@ -69,3 +70,38 @@ def train_tenant_models_job(tenant_id: str, n: int = 3000) -> None:
 # memory over time. At a handful of tenants that is theoretical — restart the worker on
 # deploy. If RSS actually climbs, run the worker with --one-shot under a supervisor
 # before reaching for subprocess isolation.
+
+
+@app.periodic(cron="*/10 * * * *")
+@app.task(name="retry_stalled_jobs", queueing_lock="retry_stalled_jobs", pass_context=True)
+async def retry_stalled_jobs_job(context, timestamp: int) -> None:
+    """A worker killed mid-task (deploy, OOM) leaves its job marked `doing` with no
+    heartbeat. train_tenant_models runs for minutes, so this is the likely one.
+
+    `get_stalled_jobs`/`retry_job` are async on the installed procrastinate (3.9.0), unlike
+    the brief's sync sketch — this task is `async def` and awaits both so it actually runs
+    instead of leaving unawaited coroutines on the floor.
+    """
+    for job in await app.job_manager.get_stalled_jobs():
+        await app.job_manager.retry_job(job)
+
+
+@app.periodic(cron="0 4 * * *")
+@app.task(name="remove_old_jobs", queueing_lock="remove_old_jobs", pass_context=True)
+async def remove_old_jobs_job(context, timestamp: int) -> None:
+    """Finished jobs accumulate forever otherwise. Failures are kept the full window so
+    a morning-after investigation still has them.
+
+    `procrastinate.builtin_tasks.remove_old_jobs` is itself an async `Task`, already
+    auto-registered on every `App` under the name
+    `builtin:procrastinate.builtin_tasks.remove_old_jobs` (not the bare `remove_old_jobs`
+    this task's own name requires) — calling it invokes its underlying async function, so
+    this wrapper must await it rather than call it as the brief's sync sketch does.
+    """
+    await procrastinate.builtin_tasks.remove_old_jobs(
+        context,
+        max_hours=72,
+        remove_failed=True,
+        remove_cancelled=True,
+        remove_aborted=True,
+    )

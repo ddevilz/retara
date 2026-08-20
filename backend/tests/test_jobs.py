@@ -84,3 +84,13 @@ def test_job_is_registered_with_a_queueing_lock():
     from magenta.jobs import train_tenant_models_job
 
     assert train_tenant_models_job.queueing_lock is not None
+
+
+def test_periodic_maintenance_is_registered():
+    """Without these, a worker killed mid-training leaves the job stuck in `doing`
+    forever and the tenant never provisions."""
+    from magenta.jobs import app
+
+    names = {t.name for t in app.tasks.values()}
+    assert "retry_stalled_jobs" in names
+    assert "remove_old_jobs" in names
