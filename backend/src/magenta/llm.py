@@ -90,7 +90,7 @@ def _call_with_retry(fn, *args, **kw):
                 "llm.rate_limited",
                 attempt=attempt,
                 sleep_seconds=round(wait, 2),
-                role=kw.get("model"),
+                model=kw.get("model"),
             )
             time.sleep(wait)
             total_slept += wait

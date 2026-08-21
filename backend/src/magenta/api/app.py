@@ -26,6 +26,19 @@ def allowed_origins() -> list[str]:
     keeps working with no configuration."""
     raw = os.environ.get("CORS_ALLOWED_ORIGINS", "")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if "*" in origins:
+        # CORSMiddleware is built below with allow_credentials=True. Starlette's
+        # combination of a literal "*" origin with allow_credentials echoes the
+        # request's actual Origin header back verbatim -- effectively
+        # any-origin-with-credentials, a real footgun even though nothing sets
+        # this today (render.yaml's CORS_ALLOWED_ORIGINS is unset). Fail loudly
+        # at startup rather than silently accepting a config mistake that's
+        # trivial to fix (name a real origin, or a comma-separated list).
+        raise RuntimeError(
+            'CORS_ALLOWED_ORIGINS="*" is not allowed with allow_credentials=True '
+            "(effectively any-origin-with-credentials). Set it to a comma-separated "
+            "list of real origins instead."
+        )
     return origins or ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 

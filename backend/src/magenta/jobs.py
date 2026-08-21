@@ -20,8 +20,18 @@ import procrastinate.builtin_tasks
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel
+from magenta.logging_config import configure_logging
 from magenta.storage import risk_model_path, uplift_model_path
 from magenta.tenancy import tenant_seed
+
+# The worker's start command is `procrastinate --app=magenta.jobs.app worker`, which
+# only ever imports this module -- never `magenta.api.app`, where `configure_logging()`
+# was previously the only call site. Without this, the worker emits unstructured
+# console logs instead of JSON. Configuring here, as early as this process's import of
+# `magenta` gets, covers the worker; `api.app.create_app()` also calls it (for the web
+# service, which doesn't import this module's CLI entrypoint path the same way) --
+# `structlog.configure()` is idempotent, so a process where both run is harmless.
+configure_logging()
 
 
 def procrastinate_conninfo() -> str:

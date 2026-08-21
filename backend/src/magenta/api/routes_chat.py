@@ -46,7 +46,7 @@ from magenta.api.deps import get_graph_deps
 from magenta.api.population import get_population
 from magenta.api.schemas import ChatStartRequest, ChatStartResponse, ChatTurnRequest
 from magenta.api.sse import guarded_stream, sse_event
-from magenta.auth import TenantContext, current_tenant
+from magenta.auth import TenantContext, bound_tenant
 from magenta.chat.agent import RetentionChat
 from magenta.chat.persona import Archetype, make_persona
 from magenta.graph import diagnose, sense
@@ -90,7 +90,7 @@ def _build_chat(customer, tenant_id: str):
 @router.post("/start", response_model=ChatStartResponse)
 def chat_start(
     req: ChatStartRequest,
-    tenant: TenantContext = Depends(current_tenant),
+    tenant: TenantContext = Depends(bound_tenant),
 ) -> ChatStartResponse:
     if req.mode == "persona" and not req.archetype:
         raise HTTPException(422, "archetype required for persona mode")
@@ -138,7 +138,7 @@ def chat_start(
 async def chat_turn(
     session_id: str,
     req: ChatTurnRequest,
-    tenant: TenantContext = Depends(current_tenant),
+    tenant: TenantContext = Depends(bound_tenant),
 ):
     session = cs.get(session_id, tenant.tenant_id)
     if session is None:

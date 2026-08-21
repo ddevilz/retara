@@ -5,8 +5,10 @@ tenant context available to check.
 `test_route_requires_auth` used to walk a hand-maintained ROUTES list -- its own
 docstring admitted a new unprotected route only fails here if someone remembers to
 add it to the list. Replaced with a structural invariant: walk every route FastAPI
-actually registered and assert `current_tenant` is one of its dependencies. A new
-route added without `Depends(current_tenant)` now fails this test with no list to
+actually registered and assert `current_tenant` is one of its dependencies (directly,
+or transitively via `bound_tenant`, the async wrapper routes now use so
+`bind_tenant()` lands in the right context -- see auth.py). A new route added
+without depending on tenant resolution at all now fails this test with no list to
 remember to update.
 
 FastAPI 0.139 groups included routers behind `_IncludedRouter` wrappers in
@@ -17,7 +19,7 @@ routes); the real APIRoute objects live at `router.original_router.routes`.
 import pytest
 
 from magenta.api.app import create_app
-from magenta.auth import current_tenant
+from magenta.auth import bound_tenant, current_tenant
 
 
 def _iter_api_routes(routes):
@@ -33,6 +35,17 @@ def _iter_api_routes(routes):
             yield from _iter_api_routes(original_router.routes)
 
 
+def _iter_deps(dependant):
+    """Recurse through sub-dependencies: `bound_tenant` wraps `current_tenant`, so a
+    route's direct `dependant.dependencies` lists `bound_tenant` only -- `current_tenant`
+    is one level deeper."""
+    if dependant is None:
+        return
+    for d in dependant.dependencies:
+        yield d.call
+        yield from _iter_deps(d)
+
+
 def test_every_api_route_requires_a_tenant():
     """A new unprotected route must fail here without anyone remembering to add it."""
     app = create_app()
@@ -42,8 +55,8 @@ def test_every_api_route_requires_a_tenant():
         if not path.startswith("/api") or path in ("/api/health", "/api/ready"):
             continue
         dependant = getattr(route, "dependant", None)
-        deps = [d.call for d in dependant.dependencies] if dependant else []
-        if current_tenant not in deps:
+        deps = list(_iter_deps(dependant))
+        if current_tenant not in deps and bound_tenant not in deps:
             unprotected.append(f"{getattr(route, 'methods', '')} {path}")
     assert unprotected == [], f"unprotected /api routes: {unprotected}"
 

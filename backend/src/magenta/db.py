@@ -25,7 +25,11 @@ def database_url() -> str:
     # which this repo does not install (pyproject only has psycopg[binary]).
     # Render's `fromDatabase.property: connectionString` produces exactly that
     # bare scheme, so normalize it here -- the one function every DB caller
-    # routes through via `get_engine()`.
+    # routes through via `get_engine()`. `postgres://` is the same gap under a
+    # shorter scheme some tools/platforms emit instead (not Render today, but
+    # common enough to handle for robustness).
+    if url.startswith("postgres://") and not url.startswith("postgresql+psycopg://"):
+        url = "postgresql://" + url[len("postgres://"):]
     if url.startswith("postgresql://") and not url.startswith("postgresql+psycopg://"):
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
@@ -34,7 +38,7 @@ def database_url() -> str:
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
     """One pooled engine per process. `pool_pre_ping` survives Postgres restarts
-    and Railway's connection recycling."""
+    and the hosting platform's (Render) connection recycling."""
     return create_engine(database_url(), pool_pre_ping=True, future=True)
 
 

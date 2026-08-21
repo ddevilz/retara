@@ -350,7 +350,13 @@ def outcome(state: OverallState, deps) -> dict:
     customer = deps.load_customer(state["customer_id"])
     offer = state["offer"]
     holdout = state["holdout"]
-    no_action = offer is None or offer.arm is Arm.NO_ACTION
+    if offer is None:
+        # decide() always sets offer (possibly arm=NO_ACTION, a real OfferDecision --
+        # never a bare None) before guardrail/act/outcome fire. A None offer here
+        # means the graph was invoked out of order, the same "real bug, not a
+        # degradation path" invariant diagnose()/decide() raise on above.
+        raise RuntimeError("outcome() called with no offer in state")
+    no_action = offer.arm is Arm.NO_ACTION
 
     # holdout measures the counterfactual: oracle sees NO offer.
     oracle_offer = None if (holdout or no_action) else offer
@@ -365,10 +371,10 @@ def outcome(state: OverallState, deps) -> dict:
     # (retained*margin*12 - cost, per the plan's ML contract): the same bandit
     # posterior is updated from both paths, so mixed scales would corrupt it.
     margin_annual = customer.gross_margin_monthly * 12.0
-    cost = 0.0 if offer is None or no_action else offer.cost
+    cost = 0.0 if no_action else offer.cost
     reward = (margin_annual if retained else 0.0) - cost
 
-    if not holdout and not no_action and offer is not None:
+    if not holdout and not no_action:
         deps.bandit.update(featurize(customer), offer.arm, reward)
 
     memory = getattr(deps, "memory", None)
@@ -380,7 +386,7 @@ def outcome(state: OverallState, deps) -> dict:
             # retained/churned result (no fulfillment-implying content).
             memory.add_edge(cid, "customer", "OUTCOME", "holdout_shadow", ts)
         else:
-            if not no_action and offer is not None:
+            if not no_action:
                 memory.consolidate(cid, "agent", "GAVE", offer.arm.value, ts)
             memory.add_edge(cid, "customer", "OUTCOME", "retained" if retained else "churned", ts)
 

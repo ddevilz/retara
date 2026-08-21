@@ -1,5 +1,5 @@
 .git
-.venv
+**/.venv
 **/__pycache__
 **/*.pyc
 backend/tests
@@ -10,6 +10,6 @@ docs
 .agents
 data/*
 !data/telco_marginals.json
-.env
-*.joblib
-*.db
+**/.env*
+**/*.joblib
+**/*.db

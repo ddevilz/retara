@@ -25,13 +25,16 @@ import os
 
 from clerk_backend_api.security import VerifyTokenOptions
 from clerk_backend_api.security import verify_token as clerk_verify
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from magenta.db import get_conn
 from magenta.jobs import train_tenant_models_job
+from magenta.logging_config import bind_tenant, get_logger
+
+logger = get_logger(__name__)
 
 
 class AuthError(Exception):
@@ -187,3 +190,21 @@ def current_tenant(
         user_id=claims.user_id,
         role=claims.org_role or "org:member",
     )
+
+
+async def bound_tenant(
+    tenant: TenantContext = Depends(current_tenant),
+) -> TenantContext:
+    """Routes depend on this instead of `current_tenant` directly.
+
+    `current_tenant` is a sync `def`, so FastAPI runs it in a worker thread via
+    `anyio.to_thread.run_sync`; a `bind_contextvars` call made inside it would bind
+    into that thread's OWN COPY of the context and be discarded the instant the
+    thread returns -- the route handler and `RequestContextMiddleware` never see it.
+    This wrapper is `async def`, so FastAPI resolves it directly on the event loop,
+    in the same context the handler and middleware share -- binding here actually
+    survives into the rest of the request.
+    """
+    bind_tenant(tenant.tenant_id)
+    logger.info("tenant.resolved", tenant_id=tenant.tenant_id)
+    return tenant
