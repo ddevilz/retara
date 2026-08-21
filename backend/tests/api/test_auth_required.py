@@ -1,4 +1,6 @@
-"""Every data route rejects an unauthenticated request. /api/health does not.
+"""Every data route rejects an unauthenticated request. /api/health and /api/ready
+do not -- both are infrastructure probes (Railway liveness/readiness) with no
+tenant context available to check.
 
 `test_route_requires_auth` used to walk a hand-maintained ROUTES list -- its own
 docstring admitted a new unprotected route only fails here if someone remembers to
@@ -37,7 +39,7 @@ def test_every_api_route_requires_a_tenant():
     unprotected = []
     for route in _iter_api_routes(app.routes):
         path = getattr(route, "path", "")
-        if not path.startswith("/api") or path == "/api/health":
+        if not path.startswith("/api") or path in ("/api/health", "/api/ready"):
             continue
         dependant = getattr(route, "dependant", None)
         deps = [d.call for d in dependant.dependencies] if dependant else []
