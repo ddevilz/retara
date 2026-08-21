@@ -1,6 +1,9 @@
 import numpy as np
+import pytest
 
 from magenta.memory.embed import LocalEmbedder
+
+pytestmark = pytest.mark.slow
 
 
 def test_encode_shape_and_determinism():

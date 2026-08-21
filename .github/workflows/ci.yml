@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine   # matches local dev; do not let these drift
+        env:
+          POSTGRES_USER: magenta
+          POSTGRES_PASSWORD: magenta
+          POSTGRES_DB: magenta
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U magenta"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql+psycopg://magenta:magenta@localhost:5433/magenta
+      CLERK_SECRET_KEY: sk_test_dummy
+      CLERK_AUTHORIZED_PARTIES: http://localhost:5173
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --frozen
+
+      - name: Lint
+        working-directory: backend
+        run: uv run ruff check src/ tests/
+
+      - name: Type check
+        working-directory: backend
+        run: uv run mypy src/
+
+      - name: Test
+        working-directory: backend
+        run: uv run pytest -m "not slow" -q
+
+      - name: Hardchecks
+        working-directory: backend
+        run: uv run pytest -m hardcheck -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run typecheck && npm run test -- --run && npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Verify config layout survives the build
+        run: |
+          docker build -t magenta-ci .
+          docker run --rm magenta-ci python -c "
+          from magenta.config import configs_dir
+          assert (configs_dir() / 'offers.yaml').exists()
+          print('LAYOUT-OK')"

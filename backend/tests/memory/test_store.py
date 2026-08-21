@@ -1,8 +1,11 @@
+import pytest
 from sqlalchemy import text
 
 from magenta.memory.embed import LocalEmbedder
 from magenta.memory.store import CustomerMemory
 from tests.db_fixtures import TENANT_A, TENANT_B
+
+pytestmark = pytest.mark.slow
 
 
 def _mem(conn):
