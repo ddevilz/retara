@@ -1,6 +1,7 @@
 import json
 
-from magenta.logging_config import bind_tenant, configure_logging, get_logger
+from magenta.context import set_tenant
+from magenta.logging_config import configure_logging, get_logger
 
 
 def test_logs_are_json(capsys):
@@ -14,7 +15,7 @@ def test_logs_are_json(capsys):
 
 def test_tenant_id_is_bound_to_subsequent_lines(capsys):
     configure_logging()
-    bind_tenant("org_abc")
+    set_tenant("org_abc")
     get_logger("test").info("scoped")
     payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert payload["tenant_id"] == "org_abc"

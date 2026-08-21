@@ -7,7 +7,7 @@ docstring admitted a new unprotected route only fails here if someone remembers 
 add it to the list. Replaced with a structural invariant: walk every route FastAPI
 actually registered and assert `current_tenant` is one of its dependencies (directly,
 or transitively via `bound_tenant`, the async wrapper routes now use so
-`bind_tenant()` lands in the right context -- see auth.py). A new route added
+`set_tenant()` lands in the right context -- see auth.py). A new route added
 without depending on tenant resolution at all now fails this test with no list to
 remember to update.
 

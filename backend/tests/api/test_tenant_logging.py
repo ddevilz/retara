@@ -1,4 +1,4 @@
-"""Regression test for Important #3 (fix-wave-2): `bind_tenant()` must actually reach
+"""Regression test for Important #3 (fix-wave-2): `set_tenant()` must actually reach
 log lines emitted while a real authenticated request is being handled, not just work
 as a bare function in isolation (that much was already covered by test_logging.py).
 

@@ -16,6 +16,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from magenta.context import set_tenant
+
+__all__ = ["configure_logging", "get_logger", "set_tenant", "RequestContextMiddleware"]
+
 
 def configure_logging() -> None:
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=logging.INFO)
@@ -35,10 +39,6 @@ def configure_logging() -> None:
 
 def get_logger(name: str) -> Any:
     return structlog.get_logger(name)
-
-
-def bind_tenant(tenant_id: str) -> None:
-    structlog.contextvars.bind_contextvars(tenant_id=tenant_id)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
