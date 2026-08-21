@@ -1,0 +1,15 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+backend/tests
+frontend
+docs
+.superpowers
+.claude
+.agents
+data/*
+!data/telco_marginals.json
+.env
+*.joblib
+*.db

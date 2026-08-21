@@ -94,8 +94,15 @@ state, unless noted otherwise above.
 
 Locked stack: Postgres + Alembic + SQLAlchemy Core (deliberate SQL retained, not
 the ORM) · Clerk auth · **Procrastinate** for jobs (NOT Celery — transactional
-enqueue, no Redis service) · Railway (web + worker + Postgres) · shared tables
+enqueue, no Redis service) · **Render** (web + worker + Postgres) · shared tables
 with `TENANT_ID` · no billing until a buyer exists.
+
+**Deploy target changed 2026-08-21: Railway → Render**, mid-Phase-1.5. The Dockerfile
+is unaffected (platform-agnostic multi-stage build). What changed: `railway.json` →
+`render.yaml` (Render's Blueprint spec); Railway's Pre-Deploy Command → Render's
+`preDeployCommand`; a Railway volume for `MAGENTA_MODEL_DIR` → a Render persistent
+disk; `${{Postgres.DATABASE_URL}}` templating → Render's `fromDatabase` env var
+reference.
 
 Invariants for the productized system:
 - **Two modes, one graph** — an `OutcomeSource` seam. Sandbox = today's oracle

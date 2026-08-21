@@ -1,0 +1,85 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Replaces railway.json (deploy target switched Railway -> Render, 2026-08-21, mid
+# Phase 1.5). The Dockerfile itself is unaffected: it's a platform-agnostic
+# multi-stage build. What changes here is deploy orchestration only.
+#
+# NOTE: written from documented Render Blueprint conventions, not verified against
+# a live Render deploy (no Render account/CLI available in this environment). Spot-
+# check against https://render.com/docs/blueprint-spec before the first real deploy,
+# the same way this branch already had to correct its assumptions about Procrastinate's
+# real API against the installed package rather than trusting a written spec blindly.
+
+databases:
+  - name: magenta-postgres
+    plan: starter
+    databaseName: magenta
+    user: magenta
+
+services:
+  - type: web
+    name: magenta-web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /api/ready
+    # Migrations run once per deploy, before traffic switches to the new instance --
+    # same reasoning as Railway's Pre-Deploy Command in the superseded railway.json:
+    # running them as part of `startCommand` would race two web instances during a
+    # rolling deploy, and running them in the worker would race the worker against
+    # the web service on which one starts first.
+    preDeployCommand: "alembic upgrade head && procrastinate --app=magenta.jobs.app schema --apply"
+    startCommand: "uvicorn magenta.api.app:app --host 0.0.0.0 --port $PORT"
+    disk:
+      name: magenta-tenant-models
+      mountPath: /data/tenants
+      sizeGB: 10
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: magenta-postgres
+          property: connectionString
+        # Render's connectionString is a plain `postgresql://` URL; SQLAlchemy
+        # requires the `+psycopg` dialect suffix. Same constraint the plan's
+        # `procrastinate_conninfo()` deals with in reverse (it STRIPS `+psycopg`
+        # for libpq) -- here the value needs the suffix ADDED before `magenta.db`
+        # reads it. Either patch the value in the Render dashboard after the
+        # database is provisioned, or add a startup-time rewrite in db.py/config
+        # if this needs to survive a database recreate without manual intervention.
+      - key: MAGENTA_MODEL_DIR
+        value: /data/tenants
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false # set to the deployed frontend origin once Phase 2 ships it
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+
+  - type: worker
+    name: magenta-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    startCommand: "procrastinate --app=magenta.jobs.app worker"
+    # ponytail: MAGENTA_MODEL_DIR is a Render persistent disk, and a disk attaches
+    # to exactly one service. The worker reads tenant model artifacts the web
+    # service trains -- both services therefore need the SAME disk, but Render
+    # disks (like Railway volumes) are single-service. Until this is resolved
+    # (shared network storage, or S3/R2 -- the plan's own long-term cutover point),
+    # the worker's MAGENTA_MODEL_DIR below is NOT the same physical volume as the
+    # web service's; artifacts trained by the worker land somewhere the web
+    # service's own disk can't see. This is a real gap this Blueprint does not
+    # solve, inherited unchanged from the Railway version's identical ponytail note.
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: magenta-postgres
+          property: connectionString
+      - key: MAGENTA_MODEL_DIR
+        value: /data/tenants
+      - key: GROQ_API_KEY
+        sync: false
