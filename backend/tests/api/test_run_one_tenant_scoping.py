@@ -9,6 +9,8 @@ via two authenticated clients and asserts two independent FULFILLMENTS rows.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from sqlalchemy import text
 
@@ -36,10 +38,10 @@ class _Params:
 
 @pytest.fixture
 def real_graph_deps(monkeypatch, db_conn):
-    """A real GraphDeps (fakes for ML/oracle, real Postgres conn) shared as the
-    cached singleton `get_graph_deps()` returns -- tenant_id here is the
-    process-default and must be overridden per-request by the route, exactly
-    like the production `get_graph_deps()` this replaces."""
+    """A real GraphDeps (fakes for ML/oracle, real Postgres conn) standing in for
+    the per-tenant cache `get_graph_deps(tenant_id)` returns in production --
+    the fake mirrors that contract by handing back a copy with `tenant_id` set
+    to whichever tenant asked, exactly like the real per-tenant cache does."""
     customer = FakeCustomer(customer_id="CUST-TENANT-SCOPE")
     deps = GraphDeps(
         risk=FakeRisk(), uplift=FakeUplift(), bandit=FakeBandit(),
@@ -48,8 +50,11 @@ def real_graph_deps(monkeypatch, db_conn):
         checkpointer=None,
     )
     monkeypatch.setattr(nodes_mod, "featurize", lambda c: [0.0])
-    monkeypatch.setattr(rs, "get_graph_deps", lambda: deps)
-    monkeypatch.setattr(rs, "_find_customer", lambda cid: customer)
+    monkeypatch.setattr(rs, "get_graph_deps", lambda tenant_id: replace(deps, tenant_id=tenant_id))
+
+    class _Pop:
+        customers = {"CUST-TENANT-SCOPE": customer}
+    monkeypatch.setattr(rs, "get_population", lambda tenant_id: _Pop())
     return deps
 
 

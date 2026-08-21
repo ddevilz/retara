@@ -13,10 +13,7 @@ from lightgbm import LGBMClassifier
 from sklift.metrics import qini_auc_score
 
 from magenta.brain.features import featurize
-from magenta.config import data_dir
 from magenta.sim.population import Customer, Segment
-
-_DEFAULT_PATH = data_dir() / "models" / "uplift.joblib"
 
 
 def _base() -> LGBMClassifier:
@@ -89,7 +86,7 @@ class UpliftModel:
         t = np.asarray([int(b) for b in treated])
         return float(qini_auc_score(y_true=y, uplift=uplift, treatment=t))
 
-    def save(self, path: str | Path = _DEFAULT_PATH) -> None:
+    def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(
@@ -98,7 +95,7 @@ class UpliftModel:
         )
 
     @classmethod
-    def load(cls, path: str | Path = _DEFAULT_PATH) -> "UpliftModel":
+    def load(cls, path: str | Path) -> "UpliftModel":
         blob = joblib.load(Path(path))
         m = cls()
         m._m_treated = blob["treated"]
