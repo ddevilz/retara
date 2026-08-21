@@ -26,10 +26,6 @@ logger = get_logger(__name__)
 
 _ROLE_TO_KEY = {"cheap": "CHEAP", "large": "LARGE", "judge": "JUDGE"}
 
-# Inverse of _ROLE_TO_KEY/_model_for: model id -> role, for metering. Built once at
-# import time from models.yaml, same source _model_for uses for the forward direction.
-_ROLE_FOR_MODEL = {load_models()[key]: role for role, key in _ROLE_TO_KEY.items()}
-
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 ## --------------------------------------------------------------------------- #
@@ -83,7 +79,7 @@ def _meter(model: str, resp) -> None:
             return
         record_usage(
             tenant_id=tenant_id,
-            role=_ROLE_FOR_MODEL.get(model, "unknown"),
+            role=_role_for_model(model),
             model=model,
             tokens_in=usage.prompt_tokens,
             tokens_out=usage.completion_tokens,
@@ -150,6 +146,18 @@ def _model_for(role: str) -> str:
     # touching the committed models.yaml. Documented in run logs when used.
     override = os.environ.get(f"MAGENTA_MODEL_{key}")
     return override or load_models()[key]
+
+
+def _role_for_model(model: str) -> str:
+    """Inverse of _model_for, for metering. Re-checks each role's currently
+    configured model (override or default) on every call so it stays correct
+    when MAGENTA_MODEL_<ROLE> is set -- a static model->role map built once at
+    import time would keep pointing at the committed models.yaml and silently
+    misattribute every call made under an active override."""
+    for role in _ROLE_TO_KEY:
+        if _model_for(role) == model:
+            return role
+    return "unknown"
 
 
 def chat(role: str, messages: list[dict], **kw) -> str:

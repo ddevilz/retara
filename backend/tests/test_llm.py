@@ -340,6 +340,44 @@ def test_chat_records_usage(monkeypatch, db_conn):
     assert tokens_used_this_month(TENANT_A) == 42
 
 
+def test_chat_records_correct_role_when_model_overridden(monkeypatch, db_conn):
+    """MAGENTA_MODEL_LARGE lets a cohort run dodge a free-tier daily cap by
+    swapping in a different model string at runtime (see llm._model_for).
+    Metering must still attribute usage to role "large", not "unknown", even
+    though the overridden model string isn't in the committed models.yaml."""
+    from unittest.mock import MagicMock
+
+    from sqlalchemy import text
+
+    from magenta.context import set_tenant
+    from magenta.db import get_conn
+    from tests.db_fixtures import TENANT_A
+
+    monkeypatch.setenv("MAGENTA_MODEL_LARGE", "some-fake-override-model")
+    set_tenant(TENANT_A)
+    fake = MagicMock()
+    fake.choices[0].message.content = "hi"
+    fake.usage.prompt_tokens = 5
+    fake.usage.completion_tokens = 7
+
+    monkeypatch.setattr("magenta.llm.get_client", lambda: MagicMock(
+        **{"chat.completions.create.return_value": fake}
+    ))
+    from magenta.llm import chat
+
+    chat("large", [{"role": "user", "content": "hi"}])
+
+    with get_conn() as conn:
+        role = conn.execute(
+            text(
+                'SELECT "ROLE" FROM "LLM_USAGE" WHERE "TENANT_ID" = :t '
+                'AND "MODEL" = :m'
+            ),
+            {"t": TENANT_A, "m": "some-fake-override-model"},
+        ).scalar_one()
+    assert role == "large"
+
+
 def test_metering_failure_never_breaks_the_llm_call(monkeypatch):
     """Metering is bookkeeping. A metering bug must not take down inference."""
     from unittest.mock import MagicMock
