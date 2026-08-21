@@ -46,7 +46,8 @@ def _parse_sse(text: str):
         elif line.startswith("data:"):
             cur["data"] = line.split(":", 1)[1].strip()
         elif line == "" and cur:
-            events.append(cur); cur = {}
+            events.append(cur)
+            cur = {}
     if cur:
         events.append(cur)
     return events

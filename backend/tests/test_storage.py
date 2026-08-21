@@ -1,6 +1,6 @@
 import pytest
 
-from magenta.storage import risk_model_path, tenant_model_dir, uplift_model_path
+from magenta.storage import risk_model_path, tenant_model_dir
 
 
 def test_paths_are_tenant_separated():

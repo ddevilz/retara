@@ -80,6 +80,7 @@ def run_memory_eval(n: int = 50, seed: int = 7) -> str:
                 timeline = mem.timeline(cid)
                 closed = [e for e in timeline if e.relation == "PLAN_IS" and e.valid_to is not None]
                 if (len(closed) == 1 and closed[0].object == old_plan
+                        and closed[0].valid_to is not None
                         and closed[0].valid_to.startswith(new_date)):
                     conflict_resolved += 1
         finally:

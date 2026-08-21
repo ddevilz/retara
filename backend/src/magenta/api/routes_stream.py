@@ -27,11 +27,11 @@ from sse_starlette.sse import EventSourceResponse
 from magenta.api.deps import get_graph_deps
 from magenta.api.population import get_population
 from magenta.api.schemas import ExperimentRequest, RunOneRequest
-from magenta.api.sse import sse_event
-from magenta.auth import TenantContext, current_tenant
+from magenta.api.sse import guarded_stream, sse_event
+from magenta.auth import TenantContext, bound_tenant
 from magenta.experiment import run_experiment
 from magenta.graph.ablation import make_policy
-from magenta.graph.build import persist_audit, build_graph
+from magenta.graph.build import build_graph, persist_audit
 
 router = APIRouter(prefix="/api", tags=["stream"])
 
@@ -47,7 +47,7 @@ _DEPS_REQUIRED_POLICIES = {"risk_rules", "agent_s1", "agent"}
 @router.post("/run-one")
 async def run_one(
     req: RunOneRequest,
-    tenant: TenantContext = Depends(current_tenant),
+    tenant: TenantContext = Depends(bound_tenant),
 ):
     tenant_id = tenant.tenant_id  # capture before the closure
     # Resolved OUTSIDE the generator, and before the customer lookup: raised
@@ -106,13 +106,13 @@ async def run_one(
             persist_audit(conn, tenant_id, audit_rows)
         yield sse_event("done", {"customer_id": req.customer_id})
 
-    return EventSourceResponse(gen())
+    return EventSourceResponse(guarded_stream(gen(), context="run_one"))
 
 
 @router.post("/experiment")
 async def experiment(
     req: ExperimentRequest,
-    tenant: TenantContext = Depends(current_tenant),
+    tenant: TenantContext = Depends(bound_tenant),
 ):
     # Resolved OUTSIDE the generator — see run_one's comment above.
     deps = get_graph_deps(tenant.tenant_id) if req.policy in _DEPS_REQUIRED_POLICIES else None
@@ -132,4 +132,4 @@ async def experiment(
         yield sse_event("scorecard", scorecard)
         yield sse_event("done", {"policy": req.policy})
 
-    return EventSourceResponse(gen())
+    return EventSourceResponse(guarded_stream(gen(), context="experiment"))

@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import time
 from functools import lru_cache
 
@@ -19,6 +18,9 @@ from langsmith.wrappers import wrap_openai
 from pydantic import BaseModel, ValidationError
 
 from magenta.config import load_models
+from magenta.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 _ROLE_TO_KEY = {"cheap": "CHEAP", "large": "LARGE", "judge": "JUDGE"}
 
@@ -84,10 +86,11 @@ def _call_with_retry(fn, *args, **kw):
             wait = min(wait, RATE_LIMIT_ATTEMPT_SLEEP_CAP_S)
             if total_slept + wait > RATE_LIMIT_TOTAL_BUDGET_S:
                 raise
-            print(
-                f"[magenta.llm] 429 rate limited (attempt {attempt}/"
-                f"{RATE_LIMIT_MAX_ATTEMPTS}); sleeping {wait:.1f}s before retry: {exc}",
-                file=sys.stderr,
+            logger.warning(
+                "llm.rate_limited",
+                attempt=attempt,
+                sleep_seconds=round(wait, 2),
+                model=kw.get("model"),
             )
             time.sleep(wait)
             total_slept += wait
@@ -132,9 +135,9 @@ def chat(role: str, messages: list[dict], **kw) -> str:
     return resp.choices[0].message.content or ""
 
 
-def chat_structured(
-    role: str, messages: list[dict], model_cls: type[BaseModel]
-) -> BaseModel:
+def chat_structured[M: BaseModel](
+    role: str, messages: list[dict], model_cls: type[M]
+) -> M:
     """Structured output -> Pydantic instance.
 
     Tries native structured parse (json_schema); falls back to JSON mode +

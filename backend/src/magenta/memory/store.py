@@ -42,6 +42,15 @@ def _to_iso_str(value: datetime | date | None) -> str | None:
     return value.isoformat()
 
 
+def _to_iso_str_required(value: datetime | date | None) -> str:
+    """Same as `_to_iso_str`, for VALID_FROM specifically: the column is
+    TIMESTAMPTZ NOT NULL (see alembic/versions/0001_baseline_schema.py), so a
+    None here means the row violates that constraint -- fail loudly."""
+    if value is None:
+        raise ValueError("MEMORY_EDGES.VALID_FROM was NULL despite the NOT NULL constraint")
+    return value.isoformat()
+
+
 class CustomerMemory:
     """Temporal KG over one shared Postgres connection, scoped to one tenant.
     `embedder` is optional -- without one, `add_edge`/`timeline` still work."""
@@ -90,7 +99,7 @@ class CustomerMemory:
         ).mappings().all()
         return [
             MemoryEdge(subject=r["SUBJECT"], relation=r["RELATION"], object=r["OBJECT"],
-                      valid_from=_to_iso_str(r["VALID_FROM"]), valid_to=_to_iso_str(r["VALID_TO"]))
+                      valid_from=_to_iso_str_required(r["VALID_FROM"]), valid_to=_to_iso_str(r["VALID_TO"]))
             for r in rows
         ]
 
@@ -116,7 +125,7 @@ class CustomerMemory:
         scored.sort(key=lambda t: t[0], reverse=True)
         return [
             MemoryEdge(subject=r["SUBJECT"], relation=r["RELATION"], object=r["OBJECT"],
-                      valid_from=_to_iso_str(r["VALID_FROM"]), valid_to=_to_iso_str(r["VALID_TO"]))
+                      valid_from=_to_iso_str_required(r["VALID_FROM"]), valid_to=_to_iso_str(r["VALID_TO"]))
             for _, r in scored[:k]
         ]
 

@@ -1,6 +1,10 @@
 import re
 
+import pytest
+
 from magenta.memory.eval import run_memory_eval
+
+pytestmark = pytest.mark.slow
 
 
 def test_memory_eval_reports_accuracy():

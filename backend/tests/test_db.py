@@ -12,6 +12,26 @@ def test_database_url_requires_env(monkeypatch):
         database_url()
 
 
+def test_database_url_normalizes_bare_postgresql_scheme(monkeypatch):
+    """Render's `fromDatabase.property: connectionString` yields a bare
+    `postgresql://...` URL. SQLAlchemy defaults that to the psycopg2 dialect,
+    which this repo does not install (only `psycopg[binary]`) -- first DB
+    access would raise ImportError on a real deploy. `database_url()` must
+    rewrite the scheme to `postgresql+psycopg://`."""
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://magenta:magenta@localhost:5433/magenta"
+    )
+    assert database_url() == "postgresql+psycopg://magenta:magenta@localhost:5433/magenta"
+
+
+def test_database_url_leaves_psycopg_scheme_unchanged(monkeypatch):
+    """Already-correct URLs (local dev, and this normalization applied once)
+    must pass through byte-for-byte -- no double-rewrite."""
+    url = "postgresql+psycopg://magenta:magenta@localhost:5433/magenta"
+    monkeypatch.setenv("DATABASE_URL", url)
+    assert database_url() == url
+
+
 def test_get_conn_executes_against_postgres():
     with get_conn() as conn:
         assert conn.execute(text("SELECT 1")).scalar() == 1

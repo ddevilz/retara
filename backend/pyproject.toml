@@ -31,13 +31,20 @@ dependencies = [
     "alembic>=1.13",
     "clerk-backend-api>=7.0",
     "procrastinate>=3.0",
+    "structlog>=24.1",
 ]
 
 [project.scripts]
 magenta = "magenta.cli:app"
 
 [dependency-groups]
-dev = ["pytest>=8.2", "pytest-asyncio>=0.23"]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.16.4",
+    "types-pyyaml>=6.0.12.20260815",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -55,3 +62,28 @@ markers = [
     "slow: real end-to-end runs (trained model artifacts, LLM stubs) — deselected by default via `-m \"not slow\"`",
     "hardcheck: deterministic pass/fail compliance invariants (run with -m hardcheck)",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# Deliberately not enabling BLE (blind-except): several `except Exception` blocks are
+# intentional degradation paths (llm.py fallbacks, auth.py token rejection) and would
+# each need a noqa. Revisit once those are the only ones left.
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]  # line length is formatted, not linted
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's `Depends(...)`/`Query(...)` default-arg pattern is the framework's own
+# documented idiom, not the mutable-default footgun B008 targets.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.mypy]
+python_version = "3.12"
+# Third-party ML libraries ship no stubs; this removes ~60 import-not-found errors that
+# say nothing about our code.
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = ["alembic/"]

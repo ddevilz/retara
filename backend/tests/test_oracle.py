@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from magenta.config import configs_dir
 from magenta.sim.oracle import Outcome, ResponseOracle, SimParams
@@ -19,7 +19,7 @@ def _stub_offer(arm="BILL_CREDIT", cost=8.0, fits=("BILL_SHOCK",)):
 
 def test_simparams_is_frozen():
     p = _params()
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         p.churn_A0 = 0.0  # frozen model -> mutation raises
 
 

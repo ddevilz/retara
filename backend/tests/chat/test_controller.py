@@ -1,6 +1,6 @@
 import pytest
 
-from magenta.chat.controller import next_act, DialogueAct
+from magenta.chat.controller import DialogueAct, next_act
 from magenta.chat.perceive import Perception
 from magenta.chat.state import DialogueState, Turn
 

@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from magenta.config import load_models, repo_root
 

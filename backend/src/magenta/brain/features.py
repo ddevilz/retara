@@ -5,6 +5,8 @@ Hidden simulator state must never appear here. ``FEATURE_NAMES`` are ALL_CAPS.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 from magenta.sim.population import Customer
@@ -42,7 +44,7 @@ def _charge_per_month_tenure(c: Customer) -> float:
     return c.total_charges / c.tenure_months
 
 
-_DERIVED_SPECS: list[tuple[str, callable]] = [
+_DERIVED_SPECS: list[tuple[str, Callable[[Customer], float]]] = [
     ("DATA_UTIL_RATIO", _data_util_ratio),
     ("AVG_CHARGE_PER_TENURE", _charge_per_month_tenure),
 ]

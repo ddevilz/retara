@@ -27,7 +27,7 @@ from magenta.brain.risk import Band, Driver, RiskAssessment
 from magenta.config import configs_dir
 from magenta.db import get_conn
 from magenta.graph.build import GraphDeps, build_graph
-from magenta.graph.state import Diagnosis
+from magenta.graph.state import Diagnosis, OverallState
 from magenta.offers import Arm, OfferCatalog
 from magenta.sim.oracle import ResponseOracle, SimParams
 from magenta.sim.population import Customer, HiddenState, Segment
@@ -278,7 +278,7 @@ def run_scenario(customer_kwargs: dict, hidden_kwargs: dict, holdout: bool = Fal
             tenant_id=tenant_id,
         )
         graph = build_graph(deps)
-        init_state = {
+        init_state: OverallState = {
             "customer_id": customer.customer_id, "campaign_id": _CAMPAIGN_ID,
             "consent_flags": {"MARKETING": True},
             "risk": None, "diagnosis": None, "offer": None, "verdict": None,

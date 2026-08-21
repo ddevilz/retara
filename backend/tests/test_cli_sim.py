@@ -1,5 +1,6 @@
-from magenta.cli import app
 from typer.testing import CliRunner
+
+from magenta.cli import app
 
 runner = CliRunner()
 

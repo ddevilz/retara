@@ -4,7 +4,7 @@ hazard_multiplier consumed by the oracle's churn logit (sum of multipliers)."""
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 import numpy as np
 from pydantic import BaseModel
@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from magenta.sim.population import Customer, HiddenState
 
 
-class EventKind(str, Enum):
+class EventKind(StrEnum):
     OVERAGE = "OVERAGE"
     DROPPED_CALLS = "DROPPED_CALLS"
     BILL_SHOCK = "BILL_SHOCK"

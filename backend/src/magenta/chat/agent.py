@@ -14,16 +14,19 @@ required before `_fulfill_via_act_node` runs.
 """
 from __future__ import annotations
 
+from typing import cast
+
 from pydantic import BaseModel
 
-from magenta.llm import chat
-from magenta.graph import GraphDeps, RiskUpliftReport, Diagnosis, act
-from magenta.sim.population import Customer
-from magenta.chat.state import DialogueState, ChatStatus, Turn
-from magenta.chat.perceive import perceive
-from magenta.chat.controller import next_act, DialogueAct
+from magenta.chat.controller import DialogueAct, next_act
 from magenta.chat.ladder import OfferLadder
-from magenta.offers import OfferDecision
+from magenta.chat.perceive import perceive
+from magenta.chat.state import ChatStatus, DialogueState, Turn
+from magenta.graph import Diagnosis, GraphDeps, RiskUpliftReport, act
+from magenta.graph.state import OverallState
+from magenta.llm import chat
+from magenta.offers import OfferCatalog, OfferDecision
+from magenta.sim.population import Customer
 
 _ACCEPT_WORDS = {"yes", "yeah", "sure", "ok", "okay", "do it", "please do", "go ahead", "sounds good"}
 
@@ -46,6 +49,9 @@ def _fulfill_via_act_node(deps: GraphDeps, customer: Customer, offer: OfferDecis
     Reuse `deps.campaign_id` (the same campaign the rest of the graph uses)
     so idempotency keys line up with any prior graph-driven contact.
     """
+    # Deliberately partial: act() only reads customer_id/campaign_id/offer/holdout
+    # off state (see magenta.graph.nodes.act) -- the other OverallState keys are
+    # graph-only bookkeeping this chat path never touches.
     state = {
         "customer_id": customer.customer_id,
         "campaign_id": getattr(deps, "campaign_id", "CHAT"),
@@ -53,7 +59,7 @@ def _fulfill_via_act_node(deps: GraphDeps, customer: Customer, offer: OfferDecis
         "holdout": False,
         "requires_approval": False,
     }
-    return act(state, deps)
+    return act(cast(OverallState, state), deps)
 
 
 def _customer_360(customer: Customer, report: RiskUpliftReport, diagnosis: Diagnosis,
@@ -80,7 +86,8 @@ class RetentionChat:
         self.diagnosis = diagnosis
         self.state = DialogueState(customer_id=customer.customer_id,
                                    authority_cap=authority_cap)
-        self.ladder = OfferLadder(deps.catalog, diagnosis, authority_cap_eur=authority_cap)
+        self.ladder = OfferLadder(cast(OfferCatalog, deps.catalog), diagnosis,
+                                  authority_cap_eur=authority_cap)
         self._current_offer: OfferDecision | None = None
         self._awaiting_confirm = False
 
@@ -112,6 +119,11 @@ class RetentionChat:
         if self._awaiting_confirm:
             if any(w in user_text.lower() for w in _ACCEPT_WORDS):
                 accepted_offer = self._current_offer
+                if accepted_offer is None:
+                    # _awaiting_confirm is only ever set alongside self._current_offer
+                    # in the NEGOTIATE branch below; None here means that invariant
+                    # broke, not that fulfillment should silently no-op.
+                    raise RuntimeError("awaiting confirm with no current offer")
                 _fulfill_via_act_node(self.deps, self.customer, accepted_offer)
                 self.state.status = ChatStatus.ACCEPTED
                 text = "Done — I've applied that to your account. Thank you for staying with us."

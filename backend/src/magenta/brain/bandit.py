@@ -9,6 +9,8 @@ Reward = retained * gross_margin_monthly * 12 - offer.cost (set by caller).
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -62,7 +64,7 @@ class ThompsonBandit:
         cov = self.sigma2 * A_inv
         return self._rng.multivariate_normal(mean, cov, size=n, method="cholesky")
 
-    def select(self, x: np.ndarray, eligible: list[Arm]) -> tuple[Arm, float]:
+    def select(self, x: np.ndarray, eligible: Sequence[Arm]) -> tuple[Arm, float]:
         x = np.asarray(x, dtype=np.float64).reshape(-1)
         cand = [a for a in eligible if a in self._A]
         if not cand:
@@ -72,12 +74,12 @@ class ThompsonBandit:
         # the MC propensity draws.
         samples = {a: self._sample_thetas(a, 1 + draws) for a in cand}
         scores = {a: float(x @ samples[a][0]) for a in cand}
-        chosen = max(scores, key=scores.get)
+        chosen = max(scores, key=lambda a: scores[a])
         # MC propensity: fraction of 100 draws where chosen arm is argmax.
         wins = 0
         for i in range(1, draws + 1):
             s = {a: float(x @ samples[a][i]) for a in cand}
-            if max(s, key=s.get) == chosen:
+            if max(s, key=lambda a: s[a]) == chosen:
                 wins += 1
         propensity = max(wins / draws, 1.0 / draws)  # never 0
         return chosen, propensity

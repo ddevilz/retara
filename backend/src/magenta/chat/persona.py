@@ -12,16 +12,16 @@ persona-free per magenta.chat.agent).
 from __future__ import annotations
 
 import math
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel
 
+from magenta.chat.state import DialogueState
 from magenta.llm import chat
 from magenta.sim.population import Customer, HiddenState
-from magenta.chat.state import DialogueState
 
 
-class Archetype(str, Enum):
+class Archetype(StrEnum):
     BILL_SHOCK = "BILL_SHOCK"
     CONFUSED = "CONFUSED"
     PRICE_HAGGLER = "PRICE_HAGGLER"

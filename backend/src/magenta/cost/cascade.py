@@ -5,8 +5,8 @@ for the production wiring (role names "cheap"/"large" map to models.yaml).
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 
 @dataclass

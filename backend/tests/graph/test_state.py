@@ -1,7 +1,10 @@
 import operator
 
 import pytest
+from pydantic import ValidationError
 
+from magenta.brain.risk import Band, Driver
+from magenta.brain.uplift import Segment
 from magenta.graph.state import (
     Diagnosis,
     GuardrailVerdict,
@@ -9,8 +12,6 @@ from magenta.graph.state import (
     RiskUpliftReport,
     Timing,
 )
-from magenta.brain.risk import Band, Driver
-from magenta.brain.uplift import Segment
 
 
 def test_timing_values():
@@ -43,7 +44,7 @@ def test_diagnosis_defaults_and_confidence_bounds():
         confidence=0.83,
     )
     assert 0.0 <= d.confidence <= 1.0
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Diagnosis(root_cause_tags=[], narrative="x", eligible_offer_ids=[], confidence=1.5)
 
 

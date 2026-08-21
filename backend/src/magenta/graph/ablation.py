@@ -49,10 +49,9 @@ class RulesPolicy:
     """
 
     def decide(self, c) -> OfferDecision | None:
-        end = getattr(c, "contract_end_days", 999)
-        overage = getattr(c, "overage_events_90d", None)
-        if overage is None:
-            overage = getattr(c, "overage_events", 0)
+        end: int = getattr(c, "contract_end_days", 999)
+        overage_90d = getattr(c, "overage_events_90d", None)
+        overage: int = overage_90d if overage_90d is not None else getattr(c, "overage_events", 0)
         if end < 30 or overage > 0:
             return _fixed_credit()
         return None
@@ -71,7 +70,7 @@ class RiskRulesPolicy:
         return None
 
 
-def make_policy(rung: str, deps: GraphDeps):
+def make_policy(rung: str, deps: GraphDeps | None):
     """Ladder-rung factory (§7).
 
     `deps` must be a real `GraphDeps` for `risk_rules`/`agent_s1`/`agent`
@@ -82,13 +81,15 @@ def make_policy(rung: str, deps: GraphDeps):
         return NoActionPolicy()
     if rung == "rules":
         return RulesPolicy()
+    if rung not in ("risk_rules", "agent_s1", "agent"):
+        raise ValueError(f"unknown rung: {rung}")
+    if deps is None:
+        raise ValueError(f"rung {rung!r} requires a real GraphDeps")
     if rung == "risk_rules":
         return RiskRulesPolicy(deps.risk)
     if rung == "agent_s1":
         return AgentPolicy(replace(deps, system2_enabled=False))
-    if rung == "agent":
-        return AgentPolicy(replace(deps, system2_enabled=True))
-    raise ValueError(f"unknown rung: {rung}")
+    return AgentPolicy(replace(deps, system2_enabled=True))
 
 
 def run_ladder(n: int, seed: int, deps_factory) -> dict[str, Scorecard]:

@@ -1,7 +1,7 @@
 from magenta.chat.ladder import OfferLadder
 from magenta.chat.state import DialogueState
-from magenta.offers import Arm, Offer, OfferCatalog, OfferDecision
 from magenta.graph.state import Diagnosis
+from magenta.offers import Arm, Offer, OfferCatalog, OfferDecision
 
 
 def _catalog(offers):

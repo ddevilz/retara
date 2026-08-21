@@ -9,8 +9,13 @@ must not itself fulfill or count outcomes — otherwise we'd double-count.
 """
 from __future__ import annotations
 
+from typing import cast
+
+from sqlalchemy.engine import Connection
+
 from magenta.graph.build import GraphDeps, build_graph, persist_audit
 from magenta.offers import Arm, OfferDecision
+from magenta.sim.population import Customer
 
 
 class AgentPolicy:
@@ -18,7 +23,7 @@ class AgentPolicy:
         self.deps = deps
         self._graph = build_graph(deps)
 
-    def _init_state(self, c) -> dict:
+    def _init_state(self, c: Customer) -> dict:
         return {
             "customer_id": c.customer_id, "campaign_id": self.deps.campaign_id,
             "consent_flags": {"MARKETING": True},
@@ -33,14 +38,17 @@ class AgentPolicy:
             "requires_approval": False, "holdout": True,
         }
 
-    def decide(self, c) -> OfferDecision | None:
+    def decide(self, c: Customer) -> OfferDecision | None:
         # patch load_customer so the graph resolves THIS customer object.
-        self.deps.load_customer = lambda cid, _c=c: _c
+        def _load_customer(cid: str) -> Customer:
+            return c
+
+        self.deps.load_customer = _load_customer
         final = self._graph.invoke(
             self._init_state(c),
             config={"configurable": {"thread_id": f"{self.deps.tenant_id}:{c.customer_id}:{self.deps.campaign_id}"}},
         )
-        persist_audit(self.deps.conn, self.deps.tenant_id, final.get("audit_log", []))
+        persist_audit(cast(Connection, self.deps.conn), self.deps.tenant_id, final.get("audit_log", []))
         verdict = final.get("verdict")
         if verdict is not None and verdict.decision == "REJECT":
             return None

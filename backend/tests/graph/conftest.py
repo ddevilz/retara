@@ -4,13 +4,12 @@ Fakes mirror the labs 0-5 interfaces exactly (duck-typed) so nodes never
 touch a real model, oracle, or DB during unit tests. `SpyChat` records every
 prompt string so we can assert no hidden-state leak.
 """
-import numpy as np
 import pytest
 
 from magenta.brain.risk import Band, Driver
 from magenta.brain.uplift import Segment
 from magenta.graph.state import Diagnosis, RiskUpliftReport, Timing
-from magenta.offers import Arm, OfferDecision
+from magenta.offers import Arm
 
 
 ## ---- observable-only customer stub (matches magenta.sim Customer surface) ----

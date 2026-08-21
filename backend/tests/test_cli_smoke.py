@@ -1,6 +1,7 @@
+from typer.testing import CliRunner
+
 import magenta.cli as cli_mod
 from magenta.cli import app
-from typer.testing import CliRunner
 
 runner = CliRunner()
 

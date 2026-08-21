@@ -10,12 +10,15 @@ returned `NegotiationResult.transcript` however they like.
 """
 from __future__ import annotations
 
+from typing import cast
+
 from pydantic import BaseModel
 
 from magenta.chat.agent import RetentionChat
 from magenta.chat.persona import PersonaAgent
 from magenta.chat.state import ChatStatus, Turn
 from magenta.graph import Diagnosis, RiskUpliftReport, diagnose, sense
+from magenta.graph.state import OverallState
 from magenta.offers import OfferDecision
 from magenta.sim.population import Customer
 
@@ -46,9 +49,12 @@ def _build_context(deps, customer: Customer) -> tuple[Customer, RiskUpliftReport
     `customer` -- the same wiring `magenta run-one`/`magenta chat` already
     use.
     """
+    # Deliberately partial: sense()/diagnose() are driven incrementally here the
+    # same way build_graph's compiled StateGraph drives them turn-by-turn --
+    # each call only reads the keys the prior call already populated.
     state: dict = {"customer_id": customer.customer_id}
-    state.update(sense(state, deps))
-    state.update(diagnose(state, deps))
+    state.update(sense(cast(OverallState, state), deps))
+    state.update(diagnose(cast(OverallState, state), deps))
     return customer, state["risk"], state["diagnosis"]
 
 
