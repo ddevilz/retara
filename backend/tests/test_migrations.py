@@ -83,3 +83,26 @@ def test_fulfillment_cost_roundtrips_exactly(db_conn):
 
     reread = fulfillment_for(db_conn, TENANT_A, "cost-roundtrip-key")
     assert reread["COST"] == Decimal("8.10")
+
+
+def test_llm_usage_table_exists(migrated_db):
+    with get_conn() as conn:
+        cols = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'LLM_USAGE'"
+            )
+        ).scalars().all()
+    assert {"TENANT_ID", "ROLE", "MODEL", "TOKENS_IN", "TOKENS_OUT", "TS"} <= set(cols)
+
+
+def test_organizations_has_a_nullable_budget(migrated_db):
+    with get_conn() as conn:
+        nullable = conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'ORGANIZATIONS' "
+                "AND column_name = 'MONTHLY_TOKEN_BUDGET'"
+            )
+        ).scalar()
+    assert nullable == "YES", "NULL must mean unlimited"
