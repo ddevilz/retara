@@ -1,9 +1,13 @@
 """Every tenant-owned table carries TENANT_ID. This test is the guard that a future
 migration cannot add a table without one."""
+from decimal import Decimal
+
 import pytest
 from sqlalchemy import text
 
 from magenta.db import get_conn
+from magenta.graph.tables import fulfillment_for, insert_fulfillment
+from tests.db_fixtures import TENANT_A
 
 TENANT_TABLES = [
     "GUARDRAIL_CONTACTS",
@@ -55,3 +59,27 @@ def test_fulfillments_pk_is_tenant_scoped(migrated_db):
             )
         ).scalars().all()
     assert set(cols) == {"TENANT_ID", "IDEMPOTENCY_KEY"}
+
+
+def test_organizations_table_exists(migrated_db):
+    with get_conn() as conn:
+        found = conn.execute(
+            text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = 'ORGANIZATIONS'"
+            )
+        ).scalar()
+    assert found == "ORGANIZATIONS"
+
+
+def test_fulfillment_cost_roundtrips_exactly(db_conn):
+    """COST is NUMERIC(12,2), not DOUBLE PRECISION -- money must not come back
+    as 8.099999999999999. psycopg returns NUMERIC as decimal.Decimal."""
+    row = insert_fulfillment(
+        db_conn, TENANT_A, "cost-roundtrip-key", "CUST_0099", "CAMP-1",
+        "BILL_CREDIT", 8.10, "FULFILLED",
+    )
+    assert row["COST"] == Decimal("8.10")
+
+    reread = fulfillment_for(db_conn, TENANT_A, "cost-roundtrip-key")
+    assert reread["COST"] == Decimal("8.10")

@@ -47,25 +47,36 @@ class ThompsonBandit:
         x = np.asarray(x, dtype=np.float64).reshape(-1)
         return float(x @ self._theta_mean(arm))
 
-    def _sample_theta(self, arm: Arm) -> np.ndarray:
+    def _sample_thetas(self, arm: Arm, n: int) -> np.ndarray:
+        """n draws of theta_a ~ N(mean, cov), batched in one call.
+
+        method="cholesky" (not the default "svd"): mean/cov are constant
+        across all n draws here, so one Cholesky factorization serves all of
+        them. select() used to call the SVD-based single-draw form 101x per
+        arm (1 chosen draw + 100 MC propensity draws) — ~100x more
+        decompositions than necessary, slow enough that a `bandit episodes`
+        cohort run took minutes and read as a hang under a 60s test timeout.
+        """
         A_inv = np.linalg.inv(self._A[arm])
         mean = A_inv @ self._b[arm]
         cov = self.sigma2 * A_inv
-        return self._rng.multivariate_normal(mean, cov)
+        return self._rng.multivariate_normal(mean, cov, size=n, method="cholesky")
 
     def select(self, x: np.ndarray, eligible: list[Arm]) -> tuple[Arm, float]:
         x = np.asarray(x, dtype=np.float64).reshape(-1)
         cand = [a for a in eligible if a in self._A]
         if not cand:
             raise ValueError("no eligible arm known to bandit")
-        # One TS draw to choose.
-        scores = {a: float(x @ self._sample_theta(a)) for a in cand}
+        draws = 100
+        # One batched draw per arm: [0] is the TS draw to choose, [1:] are
+        # the MC propensity draws.
+        samples = {a: self._sample_thetas(a, 1 + draws) for a in cand}
+        scores = {a: float(x @ samples[a][0]) for a in cand}
         chosen = max(scores, key=scores.get)
         # MC propensity: fraction of 100 draws where chosen arm is argmax.
         wins = 0
-        draws = 100
-        for _ in range(draws):
-            s = {a: float(x @ self._sample_theta(a)) for a in cand}
+        for i in range(1, draws + 1):
+            s = {a: float(x @ samples[a][i]) for a in cand}
             if max(s, key=s.get) == chosen:
                 wins += 1
         propensity = max(wins / draws, 1.0 / draws)  # never 0
@@ -105,7 +116,14 @@ class ThompsonBandit:
     def load(self, conn: Connection, tenant_id: str) -> None:
         """Tenant-scoped. A tenant with no saved rows leaves the bandit at its
         prior (no error) — that's the cold-start path every CLI/API call site
-        hits on a fresh BANDIT_POSTERIOR table."""
+        hits on a fresh BANDIT_POSTERIOR table.
+
+        Commits at the end like `save()` does: a bare SELECT still opens a
+        transaction, and `api.deps.get_graph_deps()` holds its connection for
+        the life of the process (`@lru_cache`) — an uncommitted read here left
+        that connection idle-in-transaction forever, ACCESS-SHARE-locking
+        BANDIT_POSTERIOR and blocking any later TRUNCATE on it for the rest
+        of the test session."""
         rows = conn.execute(
             text(
                 'SELECT "ARM", "A_MATRIX", "B_VECTOR", "N_UPDATES" '
@@ -125,3 +143,4 @@ class ThompsonBandit:
                 row["B_VECTOR"], dtype=np.float64
             ).reshape(self.dim).copy()
             self._n[arm] = int(row["N_UPDATES"])
+        conn.commit()

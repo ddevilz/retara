@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 
 import pytest
 
@@ -37,8 +38,9 @@ def _parse_sse(text: str):
 
 @pytest.fixture
 def patched_graph(monkeypatch):
+    @dataclass
     class _FakeDeps:
-        tenant_id = "org_default"
+        tenant_id: str = "org_default"
 
     monkeypatch.setattr(rs, "build_graph", lambda deps: _FakeGraph())
     monkeypatch.setattr(rs, "get_graph_deps", lambda: _FakeDeps())

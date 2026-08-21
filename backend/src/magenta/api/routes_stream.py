@@ -20,13 +20,16 @@ Two brief-bug fixes applied on sight, beyond the ones called out in the task:
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import anyio
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 
 from magenta.api.deps import find_customer, get_graph_deps
 from magenta.api.schemas import ExperimentRequest, RunOneRequest
 from magenta.api.sse import sse_event
+from magenta.auth import TenantContext, current_tenant
 from magenta.experiment import run_experiment
 from magenta.graph.ablation import make_policy
 from magenta.graph.build import persist_audit, build_graph
@@ -47,7 +50,11 @@ def _find_customer(customer_id: str):
 
 
 @router.post("/run-one")
-async def run_one(req: RunOneRequest):
+async def run_one(
+    req: RunOneRequest,
+    tenant: TenantContext = Depends(current_tenant),
+):
+    tenant_id = tenant.tenant_id  # capture before the closure
     customer = _find_customer(req.customer_id)
 
     async def gen():
@@ -56,7 +63,7 @@ async def run_one(req: RunOneRequest):
             yield sse_event("done", {"customer_id": req.customer_id})
             return
 
-        deps = get_graph_deps()
+        deps = replace(get_graph_deps(), tenant_id=tenant_id)
         graph = build_graph(deps)
         # The graph is sync (langgraph .stream). Run it off the event loop so we
         # don't block; forward each node update as an SSE 'node' event.
@@ -75,7 +82,7 @@ async def run_one(req: RunOneRequest):
             "requires_approval": False,
             "holdout": False,
         }
-        config = {"configurable": {"thread_id": f"{deps.tenant_id}:{customer.customer_id}:{_CAMPAIGN_ID}"}}
+        config = {"configurable": {"thread_id": f"{tenant_id}:{customer.customer_id}:{_CAMPAIGN_ID}"}}
 
         def _iter_updates(sink):
             for chunk in graph.stream(initial, config=config, stream_mode=["updates"]):
@@ -97,20 +104,24 @@ async def run_one(req: RunOneRequest):
         # Persist the audit trail so the 10.2 customer-360 view shows this run.
         conn = getattr(deps, "conn", None)
         if conn is not None and audit_rows:
-            persist_audit(conn, deps.tenant_id, audit_rows)
+            persist_audit(conn, tenant_id, audit_rows)
         yield sse_event("done", {"customer_id": req.customer_id})
 
     return EventSourceResponse(gen())
 
 
 @router.post("/experiment")
-async def experiment(req: ExperimentRequest):
+async def experiment(
+    req: ExperimentRequest,
+    tenant: TenantContext = Depends(current_tenant),
+):
     async def gen():
         yield sse_event("progress", {"phase": "start", "policy": req.policy,
                                       "n": req.n, "seed": req.seed})
 
         def _run():
-            deps = get_graph_deps() if req.policy in _DEPS_REQUIRED_POLICIES else None
+            deps = (replace(get_graph_deps(), tenant_id=tenant.tenant_id)
+                    if req.policy in _DEPS_REQUIRED_POLICIES else None)
             policy = make_policy(req.policy, deps)
             return run_experiment(policy, req.n, req.seed)
 

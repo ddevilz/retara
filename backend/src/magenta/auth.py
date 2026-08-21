@@ -1,0 +1,164 @@
+"""Clerk session verification and tenant resolution.
+
+`verify_token` is a deliberately thin wrapper around the Clerk SDK so tests have ONE
+seam to mock — the same convention this repo already uses for `magenta.llm.chat`.
+We do not re-implement JWT verification: signature checking, key rotation, and clock
+skew are the SDK's job and are a bad place to be clever.
+
+`CLERK_AUTHORIZED_PARTIES` is not optional. Without an `azp` allowlist, a token minted
+for a different application on the same Clerk instance verifies successfully here.
+
+NOTE on SDK import path: the brief this module was drafted from assumed
+`clerk_backend_api.jwks_helpers.verify_token` / `AuthenticateRequestOptions`. Neither
+exists in the installed `clerk-backend-api==7.0.0` — that module does not exist at
+all. The real, networkless, single-token verifier lives at
+`clerk_backend_api.security.verify_token`, configured with
+`clerk_backend_api.security.VerifyTokenOptions` (a dataclass, not
+`AuthenticateRequestOptions` — that class configures `authenticate_request`, a
+different higher-level flow that verifies a whole inbound HTTP request, not a bare
+token string). Verified via `pkgutil.iter_modules` + grepping the installed package;
+see task-1-report.md.
+"""
+from __future__ import annotations
+
+import os
+
+from clerk_backend_api.security import VerifyTokenOptions, verify_token as clerk_verify
+from fastapi import Header, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+
+from magenta.db import get_conn
+
+
+class AuthError(Exception):
+    """Any failure to establish a verified identity. Never leaks SDK internals."""
+
+
+class ClerkClaims(BaseModel):
+    user_id: str
+    org_id: str | None = None
+    org_role: str | None = None
+    session_id: str
+
+
+class TenantContext(BaseModel):
+    """A resolved, authorised tenant. Every data route depends on one of these."""
+    tenant_id: str
+    user_id: str
+    role: str
+
+
+def _secret_key() -> str:
+    key = os.environ.get("CLERK_SECRET_KEY")
+    if not key:
+        raise RuntimeError("CLERK_SECRET_KEY is not set")
+    return key
+
+
+def _authorized_parties() -> list[str]:
+    raw = os.environ.get("CLERK_AUTHORIZED_PARTIES", "")
+    parties = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parties:
+        raise RuntimeError(
+            "CLERK_AUTHORIZED_PARTIES is not set. Without an azp allowlist, a token "
+            "issued for another app on this Clerk instance would be accepted."
+        )
+    return parties
+
+
+def _sdk_verify(token: str) -> dict:
+    """Verification against the instance's signing key. Networkless once that key is
+    cached locally; on a cache miss (e.g. key rotation, unseen `kid`) the SDK fetches
+    JWKS from Clerk over HTTPS and caches the PEM by `kid`. Isolated as its own
+    function so tests patch exactly this and nothing else."""
+    return clerk_verify(
+        token,
+        VerifyTokenOptions(
+            secret_key=_secret_key(),
+            authorized_parties=_authorized_parties(),
+        ),
+    )
+
+
+def verify_token(token: str) -> ClerkClaims:
+    if not token:
+        raise AuthError("missing token")
+    try:
+        payload = _sdk_verify(token)
+    except RuntimeError:
+        # Missing CLERK_SECRET_KEY / CLERK_AUTHORIZED_PARTIES: a misconfigured
+        # deploy, not an invalid token. Must NOT be caught by the generic
+        # except below -- that would surface as a silent 401 on every request
+        # with no log line anywhere. Let it propagate to a 500 instead.
+        raise
+    except Exception as exc:  # SDK/payload failures alike mean "not authenticated"
+        raise AuthError("invalid token") from exc
+    try:
+        return ClerkClaims(
+            user_id=payload["sub"],
+            org_id=payload.get("org_id"),
+            org_role=payload.get("org_role"),
+            session_id=payload.get("sid", ""),
+        )
+    except Exception as exc:  # malformed payload (missing 'sub', etc.)
+        raise AuthError("invalid token") from exc
+
+
+def ensure_org(conn: Connection, org_id: str, name: str) -> None:
+    """Get-or-create the tenant row on first authenticated request.
+
+    This replaces a Clerk webhook sync: the first time anyone from an organization
+    calls the API, the tenant exists. No webhook endpoint, no reconciliation job,
+    no drift between Clerk and our registry.
+
+    Commits its own transaction. Phase 1.4 (Procrastinate) will revisit this: the
+    org insert and a provisioning-job enqueue need to share one transaction (a
+    transactional outbox), so this will stop committing and let the caller manage
+    the boundary. Not built yet because the job system doesn't exist yet.
+    """
+    conn.execute(
+        text(
+            'INSERT INTO "ORGANIZATIONS" ("ID", "NAME") VALUES (:id, :name) '
+            'ON CONFLICT ("ID") DO NOTHING'
+        ),
+        {"id": org_id, "name": name},
+    )
+    conn.commit()
+
+
+def current_tenant(
+    authorization: str | None = Header(None),
+) -> TenantContext:
+    """Sync on purpose: this does a blocking psycopg INSERT+commit (`ensure_org`)
+    and `verify_token` can do a blocking HTTPS JWKS fetch on a `kid` cache miss.
+    An `async def` here would run that I/O directly on the event loop and stall
+    every in-flight SSE stream; FastAPI runs a sync dependency in the threadpool
+    automatically."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization.removeprefix("Bearer ").strip()
+
+    try:
+        claims = verify_token(token)
+    except AuthError:
+        raise HTTPException(status_code=401, detail="invalid token") from None
+
+    if not claims.org_id:
+        raise HTTPException(
+            status_code=403,
+            detail="no active organization; select one to continue",
+        )
+
+    # ponytail: unconditional upsert on every authenticated request. Negligible at
+    # current scale; if it shows up in a profile, skip the write once the org is
+    # known-present (a bounded TTL cache, as Phase 1.3 uses for deps).
+    with get_conn() as conn:
+        ensure_org(conn, claims.org_id, claims.org_id)
+
+    return TenantContext(
+        tenant_id=claims.org_id,
+        user_id=claims.user_id,
+        role=claims.org_role or "org:member",
+    )
