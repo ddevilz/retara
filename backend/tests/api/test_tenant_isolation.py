@@ -6,7 +6,7 @@ import json
 import pytest
 
 from magenta.graph.build import persist_audit
-from tests.db_fixtures import TENANT_A, TENANT_B
+from tests.db_fixtures import TENANT_A
 
 
 @pytest.mark.asyncio

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from magenta.llm import chat_structured
 from magenta.chat.state import DialogueState
+from magenta.llm import chat_structured
 
 _SYSTEM = (
     "You parse one customer turn in a telecom retention chat. "

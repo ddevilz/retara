@@ -1,7 +1,7 @@
 import numpy as np
-from magenta.brain.features import featurize, FEATURE_NAMES
-from magenta.sim.population import generate_population
 
+from magenta.brain.features import FEATURE_NAMES, featurize
+from magenta.sim.population import generate_population
 
 HIDDEN_FIELDS = {"theta_churn_base", "theta_price_sens", "persuadable_segment", "competitor_pull"}
 

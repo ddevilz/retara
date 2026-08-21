@@ -19,7 +19,7 @@ def _default(o: Any) -> Any:
         return o.model_dump()
     if hasattr(o, "dict"):                # pydantic v1 fallback
         return o.dict()
-    if dataclasses.is_dataclass(o):
+    if dataclasses.is_dataclass(o) and not isinstance(o, type):
         return dataclasses.asdict(o)
     if isinstance(o, (set, frozenset)):
         return list(o)

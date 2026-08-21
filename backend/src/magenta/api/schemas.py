@@ -6,7 +6,7 @@ API surface should be stable even if internal models are refactored.
 """
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -52,7 +52,7 @@ class CustomerSummary(BaseModel):
     total_charges: float
     data_util_ratio: float
     dropped_call_rate: float
-    nps: Optional[float] = None
+    nps: float | None = None
     support_tickets: int
     contract_end_days: int
     clv: float
@@ -87,15 +87,15 @@ class ExperimentRequest(BaseModel):
 
 class ChatStartRequest(BaseModel):
     mode: Literal["persona", "human"]
-    archetype: Optional[str] = None   # required when mode == "persona"
-    customer_id: Optional[str] = None
+    archetype: str | None = None   # required when mode == "persona"
+    customer_id: str | None = None
 
 
 class ChatStartResponse(BaseModel):
     session_id: str
     mode: str
     customer_id: str
-    archetype: Optional[str] = None
+    archetype: str | None = None
 
 
 class ChatTurnRequest(BaseModel):

@@ -1,4 +1,3 @@
-import pytest
 
 from magenta.brain.risk import Band, Driver
 from magenta.brain.uplift import Segment

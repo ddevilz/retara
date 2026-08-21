@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
-from magenta.chat.state import DialogueState
 from magenta.chat.perceive import Perception
+from magenta.chat.state import DialogueState
 
 _NEGOTIATE_INTENTS = {"cancel", "offer_response"}
 
 
-class DialogueAct(str, Enum):
+class DialogueAct(StrEnum):
     CLARIFY = "CLARIFY"
     ANSWER = "ANSWER"
     EMPATHIZE = "EMPATHIZE"

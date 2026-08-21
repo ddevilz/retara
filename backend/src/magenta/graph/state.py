@@ -7,7 +7,7 @@ CRITICAL: no L1 latent field (theta_churn, theta_price, persuadable_segment,
 competitor_pull) ever appears here. This TypedDict is the agent's entire world.
 """
 import operator
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
@@ -18,7 +18,7 @@ from magenta.brain.uplift import Segment
 from magenta.offers import Arm, OfferDecision
 
 
-class Timing(str, Enum):
+class Timing(StrEnum):
     ACT_NOW = "ACT_NOW"
     SNOOZE = "SNOOZE"
 

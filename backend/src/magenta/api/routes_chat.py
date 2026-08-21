@@ -35,6 +35,8 @@ Brief bugs fixed on sight (beyond the ones called out in the task):
 """
 from __future__ import annotations
 
+from typing import cast
+
 import anyio
 from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
@@ -48,6 +50,7 @@ from magenta.auth import TenantContext, current_tenant
 from magenta.chat.agent import RetentionChat
 from magenta.chat.persona import Archetype, make_persona
 from magenta.graph import diagnose, sense
+from magenta.graph.state import OverallState
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -75,9 +78,12 @@ def _build_chat(customer, tenant_id: str):
     raise `ModelsNotReady` -> 503 (this call happens outside any SSE
     generator, in `chat_start`, so the exception handler sees it)."""
     deps = get_graph_deps(tenant_id)
+    # Deliberately partial: same incremental sense()/diagnose() drive as
+    # magenta.chat.runner._build_context -- each call only reads keys the
+    # prior call already populated.
     state: dict = {"customer_id": customer.customer_id}
-    state.update(sense(state, deps))
-    state.update(diagnose(state, deps))
+    state.update(sense(cast(OverallState, state), deps))
+    state.update(diagnose(cast(OverallState, state), deps))
     return RetentionChat(deps, customer, state["risk"], state["diagnosis"], authority_cap=80.0)
 
 
@@ -96,13 +102,20 @@ def chat_start(
 
     persona = None
     if req.mode == "persona":
+        assert req.archetype is not None  # guaranteed by the mode/archetype check above
         try:
             arche = Archetype[req.archetype] if req.archetype in Archetype.__members__ \
                 else Archetype(req.archetype)
         except ValueError:
-            raise HTTPException(422, f"unknown archetype {req.archetype}")
+            raise HTTPException(422, f"unknown archetype {req.archetype}") from None
         hidden = get_population(tenant.tenant_id).hidden
-        persona = make_persona(arche, customer, hidden.get(customer.customer_id))
+        hidden_state = hidden.get(customer.customer_id)
+        if hidden_state is None:
+            # HiddenStore is generated alongside the population it indexes, so a
+            # customer resolved from that same population always has an entry;
+            # a miss means the two are out of sync, not something to paper over.
+            raise HTTPException(500, f"no hidden state for {customer.customer_id}")
+        persona = make_persona(arche, customer, hidden_state)
 
     sid = cs.new_id()
     cs.create(cs.ChatSession(

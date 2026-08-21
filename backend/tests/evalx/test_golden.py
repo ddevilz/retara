@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
 from magenta.evalx.golden import (
-    GOLDEN_SCENARIOS, GoldenScenario, run_golden, GoldenResult,
+    GOLDEN_SCENARIOS,
+    GoldenResult,
+    run_golden,
 )
 
 

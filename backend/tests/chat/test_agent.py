@@ -1,14 +1,14 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from magenta.chat.agent import RetentionChat, ChatReply
+from magenta.brain.risk import Band, Driver
+from magenta.brain.uplift import Segment
+from magenta.chat.agent import RetentionChat
 from magenta.chat.controller import DialogueAct
 from magenta.chat.perceive import Perception
 from magenta.chat.state import ChatStatus
-from magenta.offers import Arm, Offer, OfferCatalog, OfferDecision
 from magenta.graph import Diagnosis, RiskUpliftReport
-from magenta.brain.risk import Band, Driver
-from magenta.brain.uplift import Segment
 from magenta.graph.state import Timing
+from magenta.offers import Arm, Offer, OfferCatalog
 from magenta.sim.population import generate_population
 
 

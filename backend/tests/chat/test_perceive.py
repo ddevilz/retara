@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from magenta.chat.perceive import perceive, Perception
+from magenta.chat.perceive import Perception, perceive
 from magenta.chat.state import DialogueState
 
 

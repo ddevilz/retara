@@ -1,4 +1,4 @@
-from magenta.brain.training import build_training_data, TrainingData
+from magenta.brain.training import TrainingData, build_training_data
 
 
 def test_shapes_and_types():
@@ -21,7 +21,7 @@ def test_treatment_is_roughly_half():
 
 def test_control_rows_have_no_offer():
     td = build_training_data(n=400, seed=2)
-    for treated, offer in zip(td.treated, td.offers):
+    for treated, offer in zip(td.treated, td.offers, strict=True):
         if not treated:
             assert offer is None
         else:

@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import os
 
-from clerk_backend_api.security import VerifyTokenOptions, verify_token as clerk_verify
+from clerk_backend_api.security import VerifyTokenOptions
+from clerk_backend_api.security import verify_token as clerk_verify
 from fastapi import Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text

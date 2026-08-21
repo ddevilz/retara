@@ -10,7 +10,8 @@ import hashlib
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 def tenant_seed(tenant_id: str) -> int:

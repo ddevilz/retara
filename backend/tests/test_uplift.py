@@ -1,5 +1,5 @@
-from magenta.brain.uplift import UpliftModel
 from magenta.brain.training import build_training_data
+from magenta.brain.uplift import UpliftModel
 
 
 def _fitted():

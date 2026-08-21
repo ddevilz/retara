@@ -15,14 +15,12 @@ import uvicorn
 from magenta.brain.bandit import ThompsonBandit
 from magenta.brain.features import FEATURE_NAMES, featurize
 from magenta.brain.parity import main as parity_main
-from magenta.brain.policy import BrainPolicy
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import Segment, UpliftModel, classify_segment
 from magenta.chat.persona import Archetype, PersonaAgent, make_persona
 from magenta.chat.runner import run_negotiation
 from magenta.config import configs_dir, data_dir, load_models
-from magenta.jobs import train_tenant_models
 from magenta.cost.cache import SemanticCache
 from magenta.cost.cascade import cascade
 from magenta.cost.meter import CostMeter
@@ -35,8 +33,9 @@ from magenta.graph import batch_diagnose
 from magenta.graph.ablation import RUNGS, make_policy, run_ladder, write_scorecards
 from magenta.graph.build import GraphDeps, build_graph, open_postgres_saver, persist_audit
 from magenta.graph.nodes import _DIAGNOSE_SYSTEM, _diagnose_user_prompt, _observables
-from magenta.graph.state import RiskUpliftReport, Timing
+from magenta.graph.state import OverallState, RiskUpliftReport, Timing
 from magenta.graph.tables import DEFAULT_TENANT_ID
+from magenta.jobs import train_tenant_models
 from magenta.llm import chat, chat_structured
 from magenta.memory.embed import LocalEmbedder
 from magenta.memory.eval import run_memory_eval
@@ -157,7 +156,7 @@ def smoke() -> None:
             fg=typer.colors.RED,
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
     latency_ms = (time.perf_counter() - start) * 1000.0
     typer.echo(f"model:   {model}")
     typer.echo(f"reply:   {reply}")
@@ -327,7 +326,7 @@ def uplift_report(
 
     counts: Counter = Counter()
     p_churns = rm.p_churn_batch(td.customers)
-    for p, tau in zip(p_churns, taus):
+    for p, tau in zip(p_churns, taus, strict=True):
         counts[classify_segment(float(p), float(tau)).value] += 1
 
     typer.echo(f"Qini (T-learner): {qini:.4f}")
@@ -392,7 +391,7 @@ def bandit_episodes(
         interventions = 0
         no_action = 0
         total_net = 0.0
-        for c, p_churn, tau in zip(customers, p_churns, taus):
+        for c, p_churn, tau in zip(customers, p_churns, taus, strict=True):
             # Mirrors BrainPolicy.decide()'s engage-gate: classify_segment's
             # own risk_floor (0.25) already subsumes BrainPolicy's separate
             # p_churn < _RISK_FLOOR check (same threshold), so PERSUADABLE
@@ -565,7 +564,7 @@ def run_one(customer_id: str,
         with open_postgres_saver() as saver:
             deps.checkpointer = saver
             graph = build_graph(deps)
-            init = {
+            init: OverallState = {
                 "customer_id": customer.customer_id, "campaign_id": campaign,
                 "consent_flags": {"MARKETING": True},
                 "risk": None, "diagnosis": None, "offer": None, "verdict": None,
@@ -575,7 +574,7 @@ def run_one(customer_id: str,
             final = graph.invoke(
                 init, config={"configurable": {"thread_id": f"{deps.tenant_id}:{customer.customer_id}:{campaign}"}})
         persist_audit(conn, deps.tenant_id, final.get("audit_log", []))
-        deps.bandit.save(conn, deps.tenant_id)
+        bandit.save(conn, deps.tenant_id)
     _pretty(final)
 
 
@@ -603,7 +602,9 @@ def chat_cmd(
     """
     customers, hidden = generate_population(64, seed=seed)
     by_id = {c.customer_id: c for c in customers}
-    target = by_id.get(customer, customers[0]) if human else customers[0]
+    target = customers[0]
+    if human and customer is not None:
+        target = by_id.get(customer, customers[0])
 
     with get_conn() as conn:
         bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
@@ -623,10 +624,15 @@ def chat_cmd(
         if human:
             result = run_negotiation(deps, target, persona=None)
         else:
-            arche = _ARCHETYPE_BY_FLAG.get(persona)
+            arche = _ARCHETYPE_BY_FLAG.get(persona) if persona is not None else None
             if arche is None:
                 raise typer.BadParameter(f"unknown persona '{persona}'")
-            agent = PersonaAgent(make_persona(arche, target, hidden.get(target.customer_id)))
+            hidden_state = hidden.get(target.customer_id)
+            if hidden_state is None:
+                # HiddenStore is generated alongside this same population, so
+                # target (drawn from `customers`) always has an entry.
+                raise RuntimeError(f"no hidden state for {target.customer_id}")
+            agent = PersonaAgent(make_persona(arche, target, hidden_state))
             result = run_negotiation(deps, target, persona=agent)
 
     typer.echo(f"\nstatus={result.status.value} turns={result.turns_used} "
@@ -799,7 +805,7 @@ def cost_report(
             fg=typer.colors.RED,
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
     r = meter.report()
     typer.echo("=== Cost/rate report ===")

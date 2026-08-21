@@ -1,8 +1,7 @@
-import pytest
 from sqlalchemy import text
 
-from magenta.brain.uplift import Segment
 import magenta.graph.nodes as nodes_mod
+from magenta.brain.uplift import Segment
 from magenta.graph.build import GraphDeps
 from magenta.graph.policy import AgentPolicy
 from magenta.offers import Arm, OfferDecision

@@ -44,7 +44,7 @@ class UpliftModel:
         customers: list[Customer],
         treated: list[bool],
         retained: list[bool],
-    ) -> "UpliftModel":
+    ) -> UpliftModel:
         X = self._matrix(customers)
         t = np.asarray([int(b) for b in treated])
         y = np.asarray([int(b) for b in retained])
@@ -59,11 +59,15 @@ class UpliftModel:
         return self
 
     def _tau_t(self, X: np.ndarray) -> np.ndarray:
+        if self._m_treated is None or self._m_control is None:
+            raise RuntimeError("UpliftModel.fit() must be called before tau/tau_batch")
         p1 = self._m_treated.predict_proba(X)[:, 1]
         p0 = self._m_control.predict_proba(X)[:, 1]
         return p1 - p0
 
     def _tau_s(self, X: np.ndarray) -> np.ndarray:
+        if self._m_single is None:
+            raise RuntimeError("UpliftModel.fit() must be called before tau_s")
         x1 = np.hstack([X, np.ones((len(X), 1))])
         x0 = np.hstack([X, np.zeros((len(X), 1))])
         return self._m_single.predict_proba(x1)[:, 1] - self._m_single.predict_proba(x0)[:, 1]
@@ -95,7 +99,7 @@ class UpliftModel:
         )
 
     @classmethod
-    def load(cls, path: str | Path) -> "UpliftModel":
+    def load(cls, path: str | Path) -> UpliftModel:
         blob = joblib.load(Path(path))
         m = cls()
         m._m_treated = blob["treated"]

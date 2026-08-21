@@ -31,7 +31,7 @@ from magenta.api.sse import sse_event
 from magenta.auth import TenantContext, current_tenant
 from magenta.experiment import run_experiment
 from magenta.graph.ablation import make_policy
-from magenta.graph.build import persist_audit, build_graph
+from magenta.graph.build import build_graph, persist_audit
 
 router = APIRouter(prefix="/api", tags=["stream"])
 

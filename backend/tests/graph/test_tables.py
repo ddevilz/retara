@@ -1,9 +1,7 @@
 """The cross-tenant collision regression. Before the fix, `idempotency_key` hashed
 only customer:campaign:arm, and FULFILLMENTS had a global PRIMARY KEY — so tenant B's
 genuine offer was silently swallowed as a duplicate of tenant A's."""
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from magenta.graph.tables import (
     contacts_since,
@@ -68,7 +66,7 @@ def test_insert_fulfillment_is_idempotent_within_a_tenant(db_conn):
 
 
 def test_contacts_since_is_tenant_scoped(db_conn):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     record_contact(db_conn, TENANT_A, "CUST_0003", "CAMP-1", now)
     record_contact(db_conn, TENANT_B, "CUST_0003", "CAMP-1", now)
     since = now - timedelta(days=1)
@@ -79,7 +77,7 @@ def test_contacts_since_filters_by_window_boundary(db_conn):
     """Boundary coverage: contacts_since backs the contact frequency cap, so the
     `>= :since` clause has to actually filter, not just exist. Without this,
     deleting the clause leaves the suite green (it did -- see final-fix-report)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     since = now - timedelta(days=14)
     record_contact(db_conn, TENANT_A, "CUST_0004", "CAMP-1", now - timedelta(days=7))   # inside
     record_contact(db_conn, TENANT_A, "CUST_0004", "CAMP-1", now - timedelta(days=20))  # outside

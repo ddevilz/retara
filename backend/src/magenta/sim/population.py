@@ -8,7 +8,7 @@ and is NEVER a field on Customer. Tests assert the two field-sets are disjoint.
 from __future__ import annotations
 
 import json
-from enum import Enum
+from enum import StrEnum
 
 import numpy as np
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from magenta.config import data_dir
 
 
-class Segment(str, Enum):
+class Segment(StrEnum):
     PERSUADABLE = "PERSUADABLE"
     SURE_THING = "SURE_THING"
     LOST_CAUSE = "LOST_CAUSE"

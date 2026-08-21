@@ -132,9 +132,9 @@ def chat(role: str, messages: list[dict], **kw) -> str:
     return resp.choices[0].message.content or ""
 
 
-def chat_structured(
-    role: str, messages: list[dict], model_cls: type[BaseModel]
-) -> BaseModel:
+def chat_structured[M: BaseModel](
+    role: str, messages: list[dict], model_cls: type[M]
+) -> M:
     """Structured output -> Pydantic instance.
 
     Tries native structured parse (json_schema); falls back to JSON mode +

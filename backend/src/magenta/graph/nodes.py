@@ -11,7 +11,8 @@ Contract guarantees enforced here:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from magenta.brain.features import featurize
 from magenta.brain.uplift import Segment, classify_segment
@@ -41,7 +42,7 @@ _OBSERVABLE_FIELDS = (
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _audit(node: str, customer_id: str, payload: dict) -> dict:
@@ -148,6 +149,11 @@ def _diagnose_user_prompt(report: RiskUpliftReport, observables: dict, history_t
 def diagnose(state: OverallState, deps) -> dict:
     customer = deps.load_customer(state["customer_id"])
     report = state["risk"]
+    if report is None:
+        # sense() always sets risk before routing here (should_engage gates the
+        # sense->diagnose edge on it) -- a None report means the graph was
+        # invoked out of order, which is a real bug, not a degradation path.
+        raise RuntimeError("diagnose() called with no risk report in state")
     observables = _observables(customer)
     memory = getattr(deps, "memory", None)
     history_text = ""
@@ -191,6 +197,10 @@ def _bandit_decide(customer, diagnosis, eligible: list[Arm], deps) -> OfferDecis
 def decide(state: OverallState, deps) -> dict:
     customer = deps.load_customer(state["customer_id"])
     diagnosis = state["diagnosis"]
+    if diagnosis is None:
+        # diagnose() always sets diagnosis before the diagnose->decide edge fires;
+        # a None diagnosis here means the graph was invoked out of order.
+        raise RuntimeError("decide() called with no diagnosis in state")
     catalog_eligible = deps.catalog.eligible(customer)
     allowed_ids = set(diagnosis.eligible_offer_ids)
     eligible = [a for a in catalog_eligible if a.value in allowed_ids]
@@ -200,7 +210,13 @@ def decide(state: OverallState, deps) -> dict:
     if (getattr(deps, "system2_enabled", False)
             and system2.should_deliberate(customer, diagnosis, deps.params.p90_clv)):
         try:
-            offer = system2.deliberate(customer, state.get("risk"), diagnosis, deps)
+            # sense() always sets risk before diagnose->decide fires in the real
+            # graph; state["risk"] is typed Optional only because unit tests
+            # exercise decide()'s S1/S2 routing with a minimal state that never
+            # ran sense() (system2.deliberate is mocked in those tests, so a
+            # None here never actually gets dereferenced there).
+            offer = system2.deliberate(customer, cast(RiskUpliftReport, state["risk"]),
+                                       diagnosis, deps)
             payload = {"arm": offer.arm.value, "cost": offer.cost, "path": "SYSTEM2",
                        "eligible": [a.value for a in eligible],
                        "rationale": offer.rationale}
@@ -253,7 +269,7 @@ def guardrail(state: OverallState, deps) -> dict:
     # field (one carrier, matching how campaign_id already works). A second
     # source of truth here would let guardrail/act and persist_audit/bandit.save
     # disagree on tenant once something seeds a state-level value.
-    since = datetime.now(timezone.utc) - timedelta(days=deps.params.freq_cap_days)
+    since = datetime.now(UTC) - timedelta(days=deps.params.freq_cap_days)
     tenant_id = deps.tenant_id
     if contacts_since(deps.conn, tenant_id, state["customer_id"], since) >= deps.params.freq_cap_max:
         failed.append("FREQ_CAP")
@@ -320,7 +336,7 @@ def act(state: OverallState, deps) -> dict:
     row = insert_fulfillment(deps.conn, tenant_id, key, cid, camp, offer.arm.value,
                              offer.cost, "FULFILLED")
     if not already:
-        record_contact(deps.conn, tenant_id, cid, camp, datetime.now(timezone.utc))
+        record_contact(deps.conn, tenant_id, cid, camp, datetime.now(UTC))
     return {"fulfillment": row,
             "audit_log": [_audit("ACT", cid,
                                  {"status": "FULFILLED" if not already else "IDEMPOTENT_HIT",
@@ -349,10 +365,10 @@ def outcome(state: OverallState, deps) -> dict:
     # (retained*margin*12 - cost, per the plan's ML contract): the same bandit
     # posterior is updated from both paths, so mixed scales would corrupt it.
     margin_annual = customer.gross_margin_monthly * 12.0
-    cost = 0.0 if no_action else offer.cost
+    cost = 0.0 if offer is None or no_action else offer.cost
     reward = (margin_annual if retained else 0.0) - cost
 
-    if not holdout and not no_action:
+    if not holdout and not no_action and offer is not None:
         deps.bandit.update(featurize(customer), offer.arm, reward)
 
     memory = getattr(deps, "memory", None)
@@ -364,7 +380,7 @@ def outcome(state: OverallState, deps) -> dict:
             # retained/churned result (no fulfillment-implying content).
             memory.add_edge(cid, "customer", "OUTCOME", "holdout_shadow", ts)
         else:
-            if not no_action:
+            if not no_action and offer is not None:
                 memory.consolidate(cid, "agent", "GAVE", offer.arm.value, ts)
             memory.add_edge(cid, "customer", "OUTCOME", "retained" if retained else "churned", ts)
 

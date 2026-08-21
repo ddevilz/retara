@@ -1,4 +1,4 @@
-from magenta.chat.state import DialogueState, ChatStatus, Turn
+from magenta.chat.state import ChatStatus, DialogueState, Turn
 from magenta.offers import Arm
 
 

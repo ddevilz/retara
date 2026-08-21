@@ -5,7 +5,7 @@ OfferDecision is the agent's output at the Act node; the oracle reads arm/cost/f
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -14,7 +14,7 @@ from magenta.config import load_yaml
 from magenta.sim.population import Customer
 
 
-class Arm(str, Enum):
+class Arm(StrEnum):
     NO_ACTION = "NO_ACTION"
     ACKNOWLEDGE_AND_FIX = "ACKNOWLEDGE_AND_FIX"
     BILL_CREDIT = "BILL_CREDIT"
@@ -44,7 +44,7 @@ class OfferCatalog(BaseModel):
     offers: dict[Arm, Offer]
 
     @classmethod
-    def load(cls, path: str | Path) -> "OfferCatalog":
+    def load(cls, path: str | Path) -> OfferCatalog:
         raw = load_yaml(Path(path))
         offers: dict[Arm, Offer] = {}
         for name, spec in raw["arms"].items():

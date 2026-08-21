@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 from magenta.offers import Arm
 
 
-class ChatStatus(str, Enum):
+class ChatStatus(StrEnum):
     ACTIVE = "ACTIVE"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"

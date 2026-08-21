@@ -21,11 +21,13 @@ import; the env var is the switch.
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import cast
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
@@ -60,7 +62,9 @@ class GraphDeps:
 def build_graph(deps: GraphDeps):
     g = StateGraph(OverallState)
 
-    bind = lambda fn: functools.partial(fn, deps=deps)
+    def bind(fn):
+        return functools.partial(fn, deps=deps)
+
     g.add_node("sense", bind(N.sense))
     g.add_node("diagnose", bind(N.diagnose))
     g.add_node("decide", bind(N.decide))
@@ -78,7 +82,11 @@ def build_graph(deps: GraphDeps):
     g.add_edge("act", "outcome")
     g.add_edge("outcome", END)
 
-    checkpointer = deps.checkpointer if deps.checkpointer is not None else InMemorySaver()
+    # deps.checkpointer is typed `object` (GraphDeps keeps its fields loosely
+    # duck-typed for dependency injection); callers only ever put a real
+    # BaseCheckpointSaver there (open_postgres_saver()) or leave it None.
+    checkpointer = (cast(BaseCheckpointSaver, deps.checkpointer)
+                    if deps.checkpointer is not None else InMemorySaver())
     return g.compile(checkpointer=checkpointer)
 
 

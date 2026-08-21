@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from magenta.evalx.judge import judge_pair, judge_sample, JudgeVerdict, JudgeReport
+from magenta.evalx.judge import JudgeReport, JudgeVerdict, judge_pair, judge_sample
 
 
 class _Raw(JudgeVerdict):

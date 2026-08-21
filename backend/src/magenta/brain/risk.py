@@ -4,7 +4,7 @@ Trains on observable features + oracle churn labels ONLY (anti-circularity).
 """
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 import joblib
@@ -56,7 +56,7 @@ _FEATURE_LABELS: dict[str, str] = {
 }
 
 
-class Band(str, Enum):
+class Band(StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
@@ -116,7 +116,7 @@ class RiskModel:
     def _matrix(self, customers: list[Customer]) -> np.ndarray:
         return np.vstack([featurize(c) for c in customers])
 
-    def fit(self, customers: list[Customer], churned: list[bool]) -> "RiskModel":
+    def fit(self, customers: list[Customer], churned: list[bool]) -> RiskModel:
         X = self._matrix(customers)
         y = np.asarray([int(b) for b in churned])
         X_tr, X_cal, y_tr, y_cal = train_test_split(
@@ -196,7 +196,7 @@ class RiskModel:
         )
 
     @classmethod
-    def load(cls, path: str | Path) -> "RiskModel":
+    def load(cls, path: str | Path) -> RiskModel:
         blob = joblib.load(Path(path))
         m = cls()
         m._calibrated = blob["calibrated"]

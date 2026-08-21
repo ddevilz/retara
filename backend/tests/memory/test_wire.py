@@ -2,9 +2,9 @@
 diagnose reads timeline into its prompt context)."""
 from __future__ import annotations
 
-from magenta.graph.nodes import diagnose, outcome
-from magenta.graph.state import Diagnosis, RiskUpliftReport, Band, Driver, Timing
 from magenta.brain.uplift import Segment
+from magenta.graph.nodes import diagnose, outcome
+from magenta.graph.state import Band, Driver, RiskUpliftReport, Timing
 from magenta.offers import Arm
 
 

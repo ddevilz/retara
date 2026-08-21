@@ -1,15 +1,15 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from magenta.chat.runner import run_negotiation, NegotiationResult
-from magenta.chat.state import ChatStatus
-from magenta.chat.persona import PersonaAgent, make_persona, Archetype
-from magenta.offers import Arm, Offer, OfferCatalog
-from magenta.graph import Diagnosis, RiskUpliftReport
 from magenta.brain.risk import Band, Driver
-from magenta.sim.population import generate_population, HiddenState, Segment
 from magenta.chat.agent import RetentionChat
 from magenta.chat.perceive import Perception
+from magenta.chat.persona import Archetype, PersonaAgent, make_persona
+from magenta.chat.runner import NegotiationResult, run_negotiation
+from magenta.chat.state import ChatStatus
+from magenta.graph import Diagnosis, RiskUpliftReport
 from magenta.graph.state import Timing
+from magenta.offers import Arm, Offer, OfferCatalog
+from magenta.sim.population import HiddenState, Segment, generate_population
 
 
 def _catalog():

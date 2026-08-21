@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -17,7 +16,7 @@ class ChatSession:
     tenant_id: str
     mode: str                 # "persona" | "human"
     customer_id: str
-    archetype: Optional[str]
+    archetype: str | None
     chat: object              # magenta.chat.agent.RetentionChat
     persona: object = None    # magenta.chat.persona.PersonaBrief | None
     history: list = field(default_factory=list)  # [{"role","text"}]
@@ -30,7 +29,7 @@ def create(session: ChatSession) -> None:
     _SESSIONS[session.session_id] = session
 
 
-def get(session_id: str, tenant_id: str) -> Optional[ChatSession]:
+def get(session_id: str, tenant_id: str) -> ChatSession | None:
     """Tenant mismatch is indistinguishable from "not found" by design — a caller
     must not be able to probe for the existence of another tenant's sessions."""
     session = _SESSIONS.get(session_id)

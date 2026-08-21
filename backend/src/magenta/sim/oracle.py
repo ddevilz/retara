@@ -20,7 +20,7 @@ from magenta.sim.events import generate_events
 from magenta.sim.population import Customer, HiddenStore, Segment
 
 if TYPE_CHECKING:  # pragma: no cover
-    from magenta.offers import OfferDecision
+    pass
 
 
 # cause-fit map: which event causes each arm addresses (mirrors offers.yaml fits_causes)
@@ -64,7 +64,7 @@ class SimParams(BaseModel):
     fatigue_per_recent_contact: float
 
     @classmethod
-    def load(cls, path: str | Path) -> "SimParams":
+    def load(cls, path: str | Path) -> SimParams:
         raw = load_yaml(Path(path))
         churn = raw["churn"]
         accept = raw["accept"]
@@ -141,7 +141,7 @@ class ResponseOracle:
         if include_benefit:
             resp = self.params.segment_responsiveness.get(seg.value, 0.0)
             arm = getattr(offer, "arm", None)
-            arm_name = arm.value if hasattr(arm, "value") else str(arm)
+            arm_name = str(getattr(arm, "value", arm))
             fits = set(getattr(offer, "fits_causes", [])) or _ARM_FITS.get(arm_name, set())
 
             # cause-fit: does the offer address this customer's live event causes?
@@ -199,7 +199,7 @@ class ResponseOracle:
         hs = self.hidden[customer.customer_id]
         offer_value_norm = float(getattr(offer, "cost", 0.0)) / 50.0
         arm = getattr(offer, "arm", None)
-        arm_name = arm.value if hasattr(arm, "value") else str(arm)
+        arm_name = str(getattr(arm, "value", arm))
         fits = set(getattr(offer, "fits_causes", [])) or _ARM_FITS.get(arm_name, set())
         rng = self._rng(customer.customer_id, "events")
         live = {e.kind.value for e in generate_events(customer, hs, rng)}

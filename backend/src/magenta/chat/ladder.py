@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from magenta.offers import Offer, OfferCatalog, OfferDecision
-from magenta.graph.state import Diagnosis
 from magenta.chat.state import DialogueState
+from magenta.graph.state import Diagnosis
+from magenta.offers import Offer, OfferCatalog, OfferDecision
 
 
 def _rationale(offer: Offer, rung: int) -> str:

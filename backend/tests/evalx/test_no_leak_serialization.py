@@ -9,15 +9,15 @@ This is the anti-circularity invariant of §0.5 (CLAUDE.md).
 """
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from magenta.evalx.hardchecks import scan_hidden_leak
-from magenta.chat.state import DialogueState
+from magenta.brain.risk import Driver
 from magenta.chat.agent import RetentionChat
 from magenta.chat.perceive import Perception
-from magenta.offers import Arm, Offer, OfferCatalog
+from magenta.chat.state import DialogueState
+from magenta.evalx.hardchecks import scan_hidden_leak
 from magenta.graph import Diagnosis, RiskUpliftReport
-from magenta.brain.risk import Driver
+from magenta.offers import Arm, Offer, OfferCatalog
 from magenta.sim.population import generate_population
 
 

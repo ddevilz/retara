@@ -1,6 +1,7 @@
 import pytest
 from sqlalchemy import text
 
+import magenta.graph.nodes as nodes_mod
 from magenta.brain.risk import Band, Driver
 from magenta.brain.uplift import Segment
 from magenta.graph.nodes import (
@@ -17,7 +18,6 @@ from magenta.graph.state import Diagnosis, GuardrailVerdict, RiskUpliftReport, T
 from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.offers import Arm, OfferDecision
 from magenta.sim.population import Customer
-import magenta.graph.nodes as nodes_mod
 
 
 ## --- tiny deps holder used only for node unit tests -------------------------
@@ -150,7 +150,8 @@ def test_guardrail_passes_clean(customer, fakes, db_conn):
 
 
 def test_guardrail_rejects_on_margin(customer, fakes, db_conn):
-    cat = fakes["catalog"]; cat._min_margin = 5.0
+    cat = fakes["catalog"]
+    cat._min_margin = 5.0
     # margin 22 - cost 20 = 2 < 5 => reject
     deps = Deps(load_customer=lambda cid: customer, catalog=cat,
                 conn=db_conn, params=Params())

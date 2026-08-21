@@ -1,6 +1,5 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pytest
 from sqlalchemy import text
 
 from magenta.brain.uplift import Segment
@@ -120,7 +119,7 @@ def test_persist_audit_three_arg_call_regression(db_conn):
     audit_log's value to tenant_id and TypeError'ing on the missing third arg.
     Pin the real 3-arg contract directly against Postgres."""
     audit_log = [{"NODE": "SENSE", "CUSTOMER_ID": "CUST-STALE-CALLER",
-                  "TS": datetime.now(timezone.utc).isoformat(),
+                  "TS": datetime.now(UTC).isoformat(),
                   "PAYLOAD": '{"engage": false}'}]
     persist_audit(db_conn, "org_regression", audit_log)  # would TypeError on the old 2-arg form
     row = db_conn.execute(

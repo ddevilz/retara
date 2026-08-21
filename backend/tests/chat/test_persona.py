@@ -1,8 +1,8 @@
 from unittest.mock import patch
 
-from magenta.chat.persona import Archetype, PersonaBrief, PersonaAgent, make_persona
+from magenta.chat.persona import Archetype, PersonaAgent, PersonaBrief, make_persona
 from magenta.chat.state import DialogueState
-from magenta.sim.population import generate_population, HiddenState, Segment
+from magenta.sim.population import HiddenState, Segment, generate_population
 
 
 def _cust_hidden():

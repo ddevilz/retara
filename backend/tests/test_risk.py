@@ -1,9 +1,10 @@
 from pathlib import Path
 
+import shap
+
 from magenta.brain.features import FEATURE_NAMES
 from magenta.brain.risk import Band, RiskModel
 from magenta.brain.training import build_training_data
-import shap
 
 
 def _fitted_model():

@@ -1,8 +1,9 @@
+from typer.testing import CliRunner
+
 import magenta.cli as cli_mod
 import magenta.cost.cascade as cascade_mod
 import magenta.graph.batch_diagnose as batch_diagnose_mod
 from magenta.cli import app
-from typer.testing import CliRunner
 
 runner = CliRunner()
 
