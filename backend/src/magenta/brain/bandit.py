@@ -119,9 +119,10 @@ class ThompsonBandit:
         hits on a fresh BANDIT_POSTERIOR table.
 
         Commits at the end like `save()` does: a bare SELECT still opens a
-        transaction, and `api.deps.get_graph_deps()` holds its connection for
-        the life of the process (`@lru_cache`) — an uncommitted read here left
-        that connection idle-in-transaction forever, ACCESS-SHARE-locking
+        transaction, and `api.deps.get_graph_deps()` holds its connection for as
+        long as its `DEPS_CACHE` entry lives (a bounded TTL cache, not a
+        process-lifetime `@lru_cache`) — an uncommitted read here left that
+        connection idle-in-transaction for that whole window, ACCESS-SHARE-locking
         BANDIT_POSTERIOR and blocking any later TRUNCATE on it for the rest
         of the test session."""
         rows = conn.execute(

@@ -1,46 +1,59 @@
-"""Assemble GraphDeps for the API process.
+"""Per-tenant GraphDeps.
 
-Checked labs 0-9 for a reusable factory first: `magenta.graph`'s public
-surface (`magenta.graph.__init__`) exports only `GraphDeps`/`act`/`diagnose`/
-`sense`/`run_scenario` — no `default_deps()` exists anywhere in the package
-(grepped the full source tree). So there is no "preferred path" to try; this
-module mirrors the CLI `run-one` wiring exactly (`magenta/cli.py::run_one`)
-instead of guessing at a factory that isn't there. Doing that probe as a
-function-level `try: from magenta.graph import default_deps` would also
-violate this repo's hard "no function-level imports" rule (CLAUDE.md) for a
-branch that can never succeed today, so it's left out rather than special-cased.
+Every singleton this module used to hold is gone: one population, one risk model, one
+uplift model, one bandit posterior, all shared by every caller. Each is now keyed by
+tenant and held in a bounded, expiring cache.
 
-`get_graph_deps()` is cached (@lru_cache) so the risk/uplift models load once
-per process, not once per request. `find_customer()` shares one cached
-population (same DEMO_POP_N/SEED as `magenta.api.data_access`, imported from
-there rather than re-declared, so the two can never drift apart) with
-`GraphDeps.load_customer`, so any customer_id the /api/customers list serves
-also resolves for the graph.
+Models are never trained here. `_load_or_train_risk` used to train LightGBM inline when
+no artifact existed, which for a new tenant meant a multi-minute HTTP request. A missing
+artifact is now `ModelsNotReady` -> 503, and provisioning is somebody else's job:
+`magenta tenant provision` today, a background job in Phase 1.4.
 """
 from __future__ import annotations
 
-from functools import lru_cache
+import threading
 
-from magenta.api.data_access import DEMO_POP_N, DEMO_POP_SEED
+from magenta.api.population import get_population
 from magenta.brain.bandit import ThompsonBandit
 from magenta.brain.features import FEATURE_NAMES
 from magenta.brain.risk import RiskModel
-from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel
 from magenta.config import configs_dir
 from magenta.db import get_conn
 from magenta.graph.build import GraphDeps
-from magenta.graph.tables import DEFAULT_TENANT_ID
 from magenta.llm import chat, chat_structured
 from magenta.offers import Arm, OfferCatalog
 from magenta.sim.oracle import ResponseOracle, SimParams
-from magenta.sim.population import Customer, generate_population
+from magenta.storage import risk_model_path, uplift_model_path
+from magenta.tenancy import BoundedTTLCache, tenant_seed
+
+# Each entry holds two LightGBM model sets, a bandit posterior and a population.
+# maxsize is the memory bound; ttl_seconds bounds staleness after the Phase 1.4 worker
+# retrains in a different process and cannot invalidate this one. on_evict closes the
+# Connection get_graph_deps() checked out for this entry -- without it, every eviction
+# (TTL expiry, LRU, overwrite, invalidate, clear) leaks a pooled connection forever and
+# the pool (~15 conns) exhausts after enough tenant rotation.
+DEPS_CACHE = BoundedTTLCache(maxsize=8, ttl_seconds=900, on_evict=lambda deps: deps.conn.close())
+
+# ponytail: GraphDeps owns a long-lived Connection, so an evicted entry's conn
+# closes under any holder that outlives the cache entry (a ChatSession's cached
+# deps, chiefly). Fails loud (ResourceClosedError), never corrupts. Upgrade path
+# is Phase 1.4: acquire the conn per operation instead of per tenant.
+
+# Guards cold-tenant builds below: on_evict closes the OLD connection whenever
+# DEPS_CACHE.put() overwrites a key, so two concurrent cold misses for the same
+# tenant would otherwise race -- whichever put() runs second closes the
+# connection the first request may still be using. A single global lock (not
+# per-tenant) serializes all cold builds; that's fine because a cold build is
+# already the expensive/rare path.
+_BUILD_LOCK = threading.Lock()
+
+
+class ModelsNotReady(Exception):
+    """This tenant has no trained artifacts yet. Provision it, then retry."""
 
 
 class _GraphParams:
-    """Mirrors cli.py's `_GraphParams` — the freq-cap/value-cap knobs the
-    guardrail node reads off `deps.params`."""
-
     freq_cap_days = 14
     freq_cap_max = 1
     value_cap = 40.0
@@ -48,9 +61,6 @@ class _GraphParams:
 
 
 class _ChatShim:
-    """Adapts module-level llm.chat/chat_structured to the deps.chat interface
-    (same shim cli.py uses for `run-one`/`chat`/`ablation`)."""
-
     def chat(self, role, messages, **kw):
         return chat(role, messages, **kw)
 
@@ -58,68 +68,44 @@ class _ChatShim:
         return chat_structured(role, messages, model_cls)
 
 
-def _load_or_train_risk(seed: int) -> RiskModel:
-    """Mirrors cli.py::_load_or_train_risk. `RiskModel.load()` with no
-    argument resolves the data_dir()-anchored default path (NOT the brief's
-    cwd-relative "data/risk.pkl" literal, which only resolves if the process
-    cwd happens to be the repo root)."""
-    try:
-        return RiskModel.load()
-    except FileNotFoundError:
-        td = build_training_data(n=3000, seed=seed)
-        model = RiskModel().fit(td.customers, td.churned)
-        model.save()
-        return model
+def get_graph_deps(tenant_id: str) -> GraphDeps:
+    cached = DEPS_CACHE.get(tenant_id)
+    if cached is not None:
+        return cached
 
+    with _BUILD_LOCK:
+        cached = DEPS_CACHE.get(tenant_id)  # another thread may have won the race
+        if cached is not None:
+            return cached
 
-def _load_or_train_uplift(seed: int) -> UpliftModel:
-    try:
-        return UpliftModel.load()
-    except FileNotFoundError:
-        td = build_training_data(n=3000, seed=seed)
-        model = UpliftModel().fit(td.customers, td.treated, td.retained)
-        model.save()
-        return model
+        try:
+            risk = RiskModel.load(risk_model_path(tenant_id))
+            uplift = UpliftModel.load(uplift_model_path(tenant_id))
+        except FileNotFoundError as exc:
+            raise ModelsNotReady(f"no trained models for tenant {tenant_id}") from exc
 
+        seed = tenant_seed(tenant_id)
+        pop = get_population(tenant_id)
 
-@lru_cache(maxsize=1)
-def _demo_customers() -> dict[str, Customer]:
-    """One generation of the same demo population `magenta.api.data_access`
-    serves `/api/customers` from, keyed by id for O(1) lookup. `generate_population`
-    returns `(list[Customer], HiddenStore)` — the hidden half is discarded
-    immediately here and never touched again."""
-    customers, _hidden = generate_population(DEMO_POP_N, DEMO_POP_SEED)
-    return {c.customer_id: c for c in customers}
+        conn = get_conn()
+        bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
+        bandit.load(conn, tenant_id)
 
-
-def find_customer(customer_id: str) -> Customer | None:
-    return _demo_customers().get(customer_id)
-
-
-@lru_cache(maxsize=1)
-def get_graph_deps() -> GraphDeps:
-    """Real GraphDeps for the API process — same risk/uplift/bandit/catalog/
-    oracle wiring `magenta run-one` uses, but with a `load_customer` that
-    resolves ANY demo-population id (the CLI binds a single customer per
-    invocation via a closure; the API's deps are a long-lived singleton
-    shared across requests for different customers, so that closure shape
-    doesn't fit here)."""
-    seed = DEMO_POP_SEED
-    conn = get_conn()
-    _, hidden = generate_population(DEMO_POP_N, seed=seed)
-    bandit = ThompsonBandit(dim=len(FEATURE_NAMES), arms=list(Arm), seed=seed)
-    # DEFAULT_TENANT_ID: no per-tenant get_graph_deps(tenant_id) yet -- Phase 1.3
-    # replaces this with the tenant_id argument that call gets.
-    bandit.load(conn, DEFAULT_TENANT_ID)  # no-op prior if no rows yet
-    sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
-    return GraphDeps(
-        risk=_load_or_train_risk(seed),
-        uplift=_load_or_train_uplift(seed),
-        bandit=bandit,
-        catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
-        oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
-        conn=conn,
-        params=_GraphParams(),
-        chat=_ChatShim(),
-        load_customer=find_customer,
-    )
+        deps = GraphDeps(
+            risk=risk,
+            uplift=uplift,
+            bandit=bandit,
+            catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
+            oracle=ResponseOracle(
+                pop.hidden,
+                params=SimParams.load(configs_dir() / "sim_params.yaml"),
+                seed=seed,
+            ),
+            conn=conn,
+            params=_GraphParams(),
+            chat=_ChatShim(),
+            load_customer=pop.customers.get,
+            tenant_id=tenant_id,
+        )
+        DEPS_CACHE.put(tenant_id, deps)
+        return deps

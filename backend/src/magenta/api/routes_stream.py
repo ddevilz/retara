@@ -20,13 +20,12 @@ Two brief-bug fixes applied on sight, beyond the ones called out in the task:
 """
 from __future__ import annotations
 
-from dataclasses import replace
-
 import anyio
 from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 
-from magenta.api.deps import find_customer, get_graph_deps
+from magenta.api.deps import get_graph_deps
+from magenta.api.population import get_population
 from magenta.api.schemas import ExperimentRequest, RunOneRequest
 from magenta.api.sse import sse_event
 from magenta.auth import TenantContext, current_tenant
@@ -45,17 +44,18 @@ _CAMPAIGN_ID = "API-RUN-ONE"
 _DEPS_REQUIRED_POLICIES = {"risk_rules", "agent_s1", "agent"}
 
 
-def _find_customer(customer_id: str):
-    return find_customer(customer_id)
-
-
 @router.post("/run-one")
 async def run_one(
     req: RunOneRequest,
     tenant: TenantContext = Depends(current_tenant),
 ):
     tenant_id = tenant.tenant_id  # capture before the closure
-    customer = _find_customer(req.customer_id)
+    # Resolved OUTSIDE the generator, and before the customer lookup: raised
+    # inside an already-started SSE stream, ModelsNotReady would become a
+    # broken stream instead of a 503 (the exception handler never sees it
+    # once the response has started).
+    deps = get_graph_deps(tenant_id)
+    customer = get_population(tenant_id).customers.get(req.customer_id)
 
     async def gen():
         if customer is None:
@@ -63,7 +63,6 @@ async def run_one(
             yield sse_event("done", {"customer_id": req.customer_id})
             return
 
-        deps = replace(get_graph_deps(), tenant_id=tenant_id)
         graph = build_graph(deps)
         # The graph is sync (langgraph .stream). Run it off the event loop so we
         # don't block; forward each node update as an SSE 'node' event.
@@ -115,13 +114,14 @@ async def experiment(
     req: ExperimentRequest,
     tenant: TenantContext = Depends(current_tenant),
 ):
+    # Resolved OUTSIDE the generator — see run_one's comment above.
+    deps = get_graph_deps(tenant.tenant_id) if req.policy in _DEPS_REQUIRED_POLICIES else None
+
     async def gen():
         yield sse_event("progress", {"phase": "start", "policy": req.policy,
                                       "n": req.n, "seed": req.seed})
 
         def _run():
-            deps = (replace(get_graph_deps(), tenant_id=tenant.tenant_id)
-                    if req.policy in _DEPS_REQUIRED_POLICIES else None)
             policy = make_policy(req.policy, deps)
             return run_experiment(policy, req.n, req.seed)
 

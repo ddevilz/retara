@@ -17,11 +17,8 @@ from sklearn.frozen import FrozenEstimator
 from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 
-from magenta.config import data_dir
 from magenta.brain.features import FEATURE_NAMES, featurize
 from magenta.sim.population import Customer
-
-_DEFAULT_PATH = data_dir() / "models" / "risk.joblib"
 
 # LightGBM hyperparams for the risk-model base learner. Exposed as a module
 # constant (rather than inlined in fit()) so other callers that need to
@@ -190,7 +187,7 @@ class RiskModel:
             ece=_expected_calibration_error(y, p),
         )
 
-    def save(self, path: str | Path = _DEFAULT_PATH) -> None:
+    def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(
@@ -199,7 +196,7 @@ class RiskModel:
         )
 
     @classmethod
-    def load(cls, path: str | Path = _DEFAULT_PATH) -> "RiskModel":
+    def load(cls, path: str | Path) -> "RiskModel":
         blob = joblib.load(Path(path))
         m = cls()
         m._calibrated = blob["calibrated"]

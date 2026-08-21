@@ -11,15 +11,13 @@ Brief bugs fixed on sight (beyond the ones called out in the task):
    `diagnose` node functions `magenta.chat.runner._build_context` already
    uses, so this endpoint doesn't fork its own (broken) copy of that scoring
    logic — mirrors the cli `chat` command's wiring via `run_negotiation`.
-2. `_pick_customer`: the brief called `generate_population(n, seed)` and
-   iterated the result as if it were a bare customer list. It actually
-   returns `(list[Customer], HiddenStore)` (see `magenta.sim.population`
-   docstring, and the same deviation already called out in
-   `magenta.api.data_access`'s module docstring) — iterating the 2-tuple
-   directly would walk over the list object and the HiddenStore object, not
-   customers. Unpack explicitly and cache it (module-level population, same
-   DEMO_POP_N/SEED `data_access`/`deps` use, imported rather than
-   re-declared so this can't silently drift onto a different population).
+2. `_pick_customer` (Phase 1.3 Task 3): now reads the per-tenant population
+   from `magenta.api.population.get_population(tenant_id)` instead of its own
+   module-level `@lru_cache(maxsize=1)` demo population — that cache and
+   `data_access`'s and `deps`'s identically-seeded copies were the same bug
+   three times (CLAUDE.md, Phase 1.3 build ledger). `deps.py` (Task 4) now
+   also resolves through `get_population(tenant_id)`, so `_build_chat` below
+   gets a Customer whose scored attributes match this tenant's population.
 3. Persona construction used a function-level `from magenta.chat.persona
    import Archetype, make_persona` — this repo's hard rule is "all imports
    at module top, no function-level imports ever" (CLAUDE.md). Hoisted.
@@ -37,46 +35,28 @@ Brief bugs fixed on sight (beyond the ones called out in the task):
 """
 from __future__ import annotations
 
-from dataclasses import replace
-from functools import lru_cache
-
 import anyio
 from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from magenta.api import chat_sessions as cs
-from magenta.api.data_access import DEMO_POP_N, DEMO_POP_SEED
 from magenta.api.deps import get_graph_deps
+from magenta.api.population import get_population
 from magenta.api.schemas import ChatStartRequest, ChatStartResponse, ChatTurnRequest
 from magenta.api.sse import sse_event
 from magenta.auth import TenantContext, current_tenant
 from magenta.chat.agent import RetentionChat
 from magenta.chat.persona import Archetype, make_persona
 from magenta.graph import diagnose, sense
-from magenta.sim.population import generate_population
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
-@lru_cache(maxsize=1)
-def _demo_population():
-    """One generation of the same demo population `data_access`/`deps` serve
-    (DEMO_POP_N/SEED imported, not re-declared, so this can't drift). Cached
-    module-locally rather than reused from `magenta.api.deps` because that
-    module's population cache is private to its own `find_customer` lookup —
-    same precedent as `data_access._demo_population` keeping its own cache
-    off the identical seed rather than reaching into `deps`."""
-    return generate_population(DEMO_POP_N, DEMO_POP_SEED)
-
-
-def _pick_customer(customer_id: str | None):
-    customers, _hidden = _demo_population()
+def _pick_customer(tenant_id: str, customer_id: str | None):
+    population = get_population(tenant_id)
     if customer_id:
-        for c in customers:
-            if getattr(c, "customer_id", None) == customer_id:
-                return c
-        return None
-    return customers[0]  # default demo customer
+        return population.customers.get(customer_id)
+    return next(iter(population.customers.values()))  # default demo customer
 
 
 def _build_chat(customer, tenant_id: str):
@@ -84,19 +64,17 @@ def _build_chat(customer, tenant_id: str):
     sense/diagnose node functions the decision graph and negotiation runner
     use (mirrors `magenta.chat.runner._build_context`) instead of forking a
     second, broken copy of that scoring logic. `sense`/`diagnose` re-load the
-    customer via `deps.load_customer(customer_id)`, so this requires that id
-    to resolve on the graph's own demo population (`magenta.api.deps`) —
-    true here because both populations share DEMO_POP_N/SEED and
-    `generate_population` is a seeded, deterministic function (CLAUDE.md:
-    "same seed -> identical output"), so the same id always yields an
-    equal Customer either way.
+    customer via `deps.load_customer(customer_id)`, which now (Task 4) is
+    this same tenant's own population, so the reloaded Customer's attribute
+    values match `customer` above.
 
-    `tenant_id` rebinds the cached GraphDeps singleton's tenant field per
-    request (see routes_stream.py's `replace(...)` — same fix, same reason:
-    the session's RetentionChat later reaches `act()` on this deps object via
-    `chat/agent.py`, which must not write FULFILLMENTS/GUARDRAIL_CONTACTS
-    under the process-default tenant)."""
-    deps = replace(get_graph_deps(), tenant_id=tenant_id)
+    `get_graph_deps(tenant_id)` returns this tenant's own cached GraphDeps
+    (`deps.tenant_id` already set correctly) — the session's RetentionChat
+    later reaches `act()` on this deps object via `chat/agent.py`, which must
+    not write FULFILLMENTS/GUARDRAIL_CONTACTS under the wrong tenant. May
+    raise `ModelsNotReady` -> 503 (this call happens outside any SSE
+    generator, in `chat_start`, so the exception handler sees it)."""
+    deps = get_graph_deps(tenant_id)
     state: dict = {"customer_id": customer.customer_id}
     state.update(sense(state, deps))
     state.update(diagnose(state, deps))
@@ -110,7 +88,7 @@ def chat_start(
 ) -> ChatStartResponse:
     if req.mode == "persona" and not req.archetype:
         raise HTTPException(422, "archetype required for persona mode")
-    customer = _pick_customer(req.customer_id)
+    customer = _pick_customer(tenant.tenant_id, req.customer_id)
     if customer is None:
         raise HTTPException(404, f"unknown customer {req.customer_id}")
 
@@ -123,7 +101,7 @@ def chat_start(
                 else Archetype(req.archetype)
         except ValueError:
             raise HTTPException(422, f"unknown archetype {req.archetype}")
-        _, hidden = _demo_population()
+        hidden = get_population(tenant.tenant_id).hidden
         persona = make_persona(arche, customer, hidden.get(customer.customer_id))
 
     sid = cs.new_id()

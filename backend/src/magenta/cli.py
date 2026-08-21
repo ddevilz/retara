@@ -22,6 +22,8 @@ from magenta.brain.uplift import Segment, UpliftModel, classify_segment
 from magenta.chat.persona import Archetype, PersonaAgent, make_persona
 from magenta.chat.runner import run_negotiation
 from magenta.config import configs_dir, data_dir, load_models
+from magenta.storage import risk_model_path, uplift_model_path
+from magenta.tenancy import tenant_seed
 from magenta.cost.cache import SemanticCache
 from magenta.cost.cascade import cascade
 from magenta.cost.meter import CostMeter
@@ -429,6 +431,29 @@ def bandit_episodes(
         )
 
 
+tenant_app = typer.Typer(help="Tenant provisioning.")
+app.add_typer(tenant_app, name="tenant")
+
+
+@tenant_app.command("provision")
+def tenant_provision_cmd(
+    tenant_id: str,
+    n: int = typer.Option(3000, help="Training population size."),
+) -> None:
+    """Train and save this tenant's risk and uplift models.
+
+    Stopgap until Phase 1.4 runs this as a background job — the logic moves wholesale
+    into the job, so keep it a plain function call, not CLI-shaped logic.
+    """
+    seed = tenant_seed(tenant_id)
+    td = build_training_data(n=n, seed=seed)
+    RiskModel().fit(td.customers, td.churned).save(risk_model_path(tenant_id))
+    UpliftModel().fit(td.customers, td.treated, td.retained).save(
+        uplift_model_path(tenant_id)
+    )
+    typer.echo(f"provisioned {tenant_id} (seed={seed}, n={n})")
+
+
 ## ---- appended by lab 6: single-customer graph walk (manual-test surface) ----
 
 
@@ -450,15 +475,16 @@ class _ChatShim:
 
 
 def _load_or_train_risk(seed: int) -> RiskModel:
-    """RiskModel.load() with NO argument uses the data_dir()-anchored default
-    path (fixes the brief's cwd-relative "data/risk.pkl" bug — that literal
-    only resolves if the process cwd happens to be the repo root, but these
-    commands are documented as `cd backend && uv run magenta ...`). If the
-    artifact is missing, train a small stand-in on the fly so the manual-test
-    surface still works end to end; `magenta risk train` remains the
-    authoritative way to get a properly-sized model."""
+    """Single-tenant demo default (Phase 1.3 pre-Task-4): no tenant_id is
+    threaded through this manual-test CLI surface yet, so this keeps the old
+    shared data_dir()-anchored path as a literal here rather than inventing a
+    new default-path abstraction. Task 4 replaces this with a tenant path via
+    magenta.storage. If the artifact is missing, train a small stand-in on
+    the fly so the manual-test surface still works end to end; `magenta risk
+    train` remains the authoritative way to get a properly-sized model."""
+    path = data_dir() / "models" / "risk.joblib"
     try:
-        return RiskModel.load()
+        return RiskModel.load(path)
     except FileNotFoundError:
         typer.echo(
             "(no risk model artifact found; training a quick one on n=3000 -- "
@@ -466,13 +492,15 @@ def _load_or_train_risk(seed: int) -> RiskModel:
         )
         td = build_training_data(n=3000, seed=seed)
         model = RiskModel().fit(td.customers, td.churned)
-        model.save()
+        model.save(path)
         return model
 
 
 def _load_or_train_uplift(seed: int) -> UpliftModel:
+    """Single-tenant demo default (Phase 1.3 pre-Task-4); see _load_or_train_risk."""
+    path = data_dir() / "models" / "uplift.joblib"
     try:
-        return UpliftModel.load()
+        return UpliftModel.load(path)
     except FileNotFoundError:
         typer.echo(
             "(no uplift model artifact found; training a quick one on n=3000 -- "
@@ -480,7 +508,7 @@ def _load_or_train_uplift(seed: int) -> UpliftModel:
         )
         td = build_training_data(n=3000, seed=seed)
         model = UpliftModel().fit(td.customers, td.treated, td.retained)
-        model.save()
+        model.save(path)
         return model
 
 

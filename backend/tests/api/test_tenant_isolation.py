@@ -40,10 +40,13 @@ async def test_customer_360_audit_is_tenant_scoped(client_tenant_b, db_conn):
 
 
 @pytest.mark.asyncio
-async def test_chat_session_from_other_tenant_is_404(client, client_tenant_b):
+async def test_chat_session_from_other_tenant_is_404(client, client_tenant_b, provisioned_tenants):
     # PRICE_SENSITIVE is not a real archetype (magenta.chat.persona.Archetype
     # has BILL_SHOCK/CONFUSED/PRICE_HAGGLER/NETWORK_COMPLAINER/
     # COMPETITOR_BLUFFER/SLEEPING_DOG) -- verified against the real enum.
+    # chat/start now resolves a real per-tenant GraphDeps (Task 5), which needs
+    # trained models on disk -- provisioned_tenants trains and saves them for
+    # both TENANT_A and TENANT_B under an isolated MAGENTA_MODEL_DIR.
     start = await client.post(
         "/api/chat/start", json={"mode": "persona", "archetype": "PRICE_HAGGLER"}
     )

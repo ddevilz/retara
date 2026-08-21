@@ -1,9 +1,11 @@
 """FastAPI application factory."""
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from magenta.api.deps import ModelsNotReady
 from magenta.api.routes_chat import router as chat_router
 from magenta.api.routes_data import router as data_router
 from magenta.api.routes_stream import router as stream_router
@@ -29,6 +31,14 @@ def create_app() -> FastAPI:
     @app.get("/api/health", response_model=Health)
     def health() -> Health:
         return Health()
+
+    @app.exception_handler(ModelsNotReady)
+    async def models_not_ready_handler(request: Request, exc: ModelsNotReady):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "models are still being prepared for this workspace"},
+            headers={"Retry-After": "30"},
+        )
 
     app.include_router(data_router)
     app.include_router(stream_router)

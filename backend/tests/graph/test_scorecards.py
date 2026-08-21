@@ -6,7 +6,7 @@ from magenta.brain.bandit import ThompsonBandit
 from magenta.brain.features import FEATURE_NAMES
 from magenta.brain.risk import RiskModel
 from magenta.brain.uplift import UpliftModel
-from magenta.config import configs_dir
+from magenta.config import configs_dir, data_dir
 from magenta.graph.ablation import RUNGS, run_ladder, write_scorecards
 from magenta.graph.build import GraphDeps
 from magenta.graph.state import Diagnosis
@@ -72,7 +72,8 @@ def test_ladder_ordering_agent_ge_rules_small_n(db_conn):
 
         sim_params = SimParams.load(configs_dir() / "sim_params.yaml")
         return GraphDeps(
-            risk=RiskModel.load(), uplift=UpliftModel.load(),
+            risk=RiskModel.load(data_dir() / "models" / "risk.joblib"),
+            uplift=UpliftModel.load(data_dir() / "models" / "uplift.joblib"),
             bandit=bandit, catalog=OfferCatalog.load(configs_dir() / "offers.yaml"),
             oracle=ResponseOracle(hidden, params=sim_params, seed=seed),
             conn=db_conn, params=_P(), chat=_Chat(), load_customer=lambda cid: None)
