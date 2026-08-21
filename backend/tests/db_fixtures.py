@@ -5,6 +5,8 @@ after every test, so tests stay isolated without paying to re-run migrations per
 """
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 from alembic.config import Config
 from sqlalchemy import text
@@ -34,6 +36,21 @@ def migrated_db() -> None:
     # point at a developer's working database. Per-test isolation comes from the
     # TRUNCATE-on-teardown in `db_conn`, not from dropping the schema.
     command.upgrade(cfg, "head")
+    # Procrastinate's schema is owned by the library, not Alembic -- but unlike
+    # Alembic's upgrade(head), `schema --apply` is NOT idempotent: its CREATE TYPE
+    # statements have no IF NOT EXISTS, so re-running it against a working database
+    # that already has the tables (confirmed empirically: "type
+    # procrastinate_job_status already exists") errors out. Guard it the way
+    # Alembic guards itself, by checking what's already there.
+    with get_engine().connect() as conn:
+        already_applied = conn.execute(
+            text("SELECT to_regclass('public.procrastinate_jobs')")
+        ).scalar()
+    if already_applied is None:
+        subprocess.run(
+            ["procrastinate", "--app=magenta.jobs.app", "schema", "--apply"],
+            check=True,
+        )
 
 
 def _truncate_all(conn: Connection) -> None:

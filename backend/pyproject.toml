@@ -30,6 +30,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "alembic>=1.13",
     "clerk-backend-api>=7.0",
+    "procrastinate>=3.0",
 ]
 
 [project.scripts]

@@ -30,6 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from magenta.db import get_conn
+from magenta.jobs import train_tenant_models_job
 
 
 class AuthError(Exception):
@@ -107,32 +108,54 @@ def verify_token(token: str) -> ClerkClaims:
 
 
 def ensure_org(conn: Connection, org_id: str, name: str) -> None:
-    """Get-or-create the tenant row on first authenticated request.
+    """Get-or-create the tenant, and on creation enqueue provisioning in the SAME
+    transaction.
 
     This replaces a Clerk webhook sync: the first time anyone from an organization
     calls the API, the tenant exists. No webhook endpoint, no reconciliation job,
     no drift between Clerk and our registry.
 
-    Commits its own transaction. Phase 1.4 (Procrastinate) will revisit this: the
-    org insert and a provisioning-job enqueue need to share one transaction (a
-    transactional outbox), so this will stop committing and let the caller manage
-    the boundary. Not built yet because the job system doesn't exist yet.
+    `rowcount == 1` means this call created the row, so exactly one provisioning job
+    is enqueued per tenant no matter how many requests arrive. `driver_connection`
+    reaches the raw psycopg connection underneath SQLAlchemy, which is what
+    Procrastinate needs in order to write the job through our transaction rather
+    than its own. `queueing_lock=org_id` scopes the dedupe lock per tenant instead
+    of the task's global default -- otherwise two tenants signing up around the same
+    time would have the second `.defer()` raise `AlreadyEnqueued`. `lock=org_id` is
+    the separate primitive that actually matters for correctness once a job is
+    running: `queueing_lock` only dedupes jobs still sitting in `todo`, it does NOT
+    stop two jobs with the same lock value from *executing* concurrently. Without
+    `lock`, a stalled-job retry (see `jobs.retry_stalled_jobs_job`) that re-queues a
+    tenant whose worker only *looked* dead (heartbeat lapsed mid multi-minute
+    LightGBM fit) could have two workers training and saving the same tenant's
+    artifacts at once -- `RiskModel.save()` is a bare `joblib.dump`, not a
+    tmp-file-then-rename, so that race can torn-write the file.
+
+    No commit here: the caller owns the transaction boundary. That is the entire
+    point -- if the caller rolls back, the job disappears with the row.
     """
-    conn.execute(
+    result = conn.execute(
         text(
             'INSERT INTO "ORGANIZATIONS" ("ID", "NAME") VALUES (:id, :name) '
             'ON CONFLICT ("ID") DO NOTHING'
         ),
         {"id": org_id, "name": name},
     )
-    conn.commit()
+    if result.rowcount == 1:
+        train_tenant_models_job.configure(
+            connection=conn.connection.driver_connection,
+            queueing_lock=org_id,
+            lock=org_id,
+        ).defer(tenant_id=org_id)
 
 
 def current_tenant(
     authorization: str | None = Header(None),
 ) -> TenantContext:
-    """Sync on purpose: this does a blocking psycopg INSERT+commit (`ensure_org`)
-    and `verify_token` can do a blocking HTTPS JWKS fetch on a `kid` cache miss.
+    """Sync on purpose: this does a blocking psycopg INSERT via `ensure_org`, then
+    commits here (the commit moved out of `ensure_org` so its own transaction-boundary
+    tests can control commit/rollback), and `verify_token` can do a blocking HTTPS
+    JWKS fetch on a `kid` cache miss.
     An `async def` here would run that I/O directly on the event loop and stall
     every in-flight SSE stream; FastAPI runs a sync dependency in the threadpool
     automatically."""
@@ -156,6 +179,7 @@ def current_tenant(
     # known-present (a bounded TTL cache, as Phase 1.3 uses for deps).
     with get_conn() as conn:
         ensure_org(conn, claims.org_id, claims.org_id)
+        conn.commit()
 
     return TenantContext(
         tenant_id=claims.org_id,
