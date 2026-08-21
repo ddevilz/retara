@@ -21,6 +21,13 @@ def database_url() -> str:
             "DATABASE_URL is not set. Local dev: "
             "postgresql+psycopg://magenta:magenta@localhost:5433/magenta"
         )
+    # SQLAlchemy's default dialect for a bare `postgresql://` scheme is psycopg2,
+    # which this repo does not install (pyproject only has psycopg[binary]).
+    # Render's `fromDatabase.property: connectionString` produces exactly that
+    # bare scheme, so normalize it here -- the one function every DB caller
+    # routes through via `get_engine()`.
+    if url.startswith("postgresql://") and not url.startswith("postgresql+psycopg://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
     return url
 
 

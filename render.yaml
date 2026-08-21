@@ -44,9 +44,9 @@ services:
         # requires the `+psycopg` dialect suffix. Same constraint the plan's
         # `procrastinate_conninfo()` deals with in reverse (it STRIPS `+psycopg`
         # for libpq) -- here the value needs the suffix ADDED before `magenta.db`
-        # reads it. Either patch the value in the Render dashboard after the
-        # database is provisioned, or add a startup-time rewrite in db.py/config
-        # if this needs to survive a database recreate without manual intervention.
+        # reads it. Handled in code: `magenta.db.database_url()` normalizes a
+        # bare `postgresql://` scheme to `postgresql+psycopg://` before the
+        # engine is built, so no manual dashboard edit is needed.
       - key: MAGENTA_MODEL_DIR
         value: /data/tenants
       - key: CORS_ALLOWED_ORIGINS
