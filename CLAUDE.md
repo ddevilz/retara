@@ -35,6 +35,10 @@ clone. Don't hunt for them in git history. Build ledger: `.superpowers/sdd/progr
   Third-party schemas (`procrastinate_jobs`, `information_schema`) keep their own casing.
 - **Pydantic v2** everywhere; **seeds everywhere** (same seed ⇒ identical output — explicit `seed`/`rng` params, sha256 not `hash()`).
 - **Plain `openai` package** — NO LangChain/LiteLLM gateway. Groq default via `GROQ_API_KEY`; `OPENAI_API_KEY` wins if set. Per-role env override: `MAGENTA_MODEL_<CHEAP|LARGE|JUDGE>`.
+- **Clerk auth env vars are required, not optional** (Phase 1.2): `CLERK_SECRET_KEY` and
+  `CLERK_AUTHORIZED_PARTIES` (comma-separated `azp` allowlist). Without both, every API
+  request fails — `magenta.auth._sdk_verify` raises `RuntimeError`, which now surfaces as
+  a 500 (not a silent 401 — see §Production direction).
 - **LangSmith** via `langsmith.wrappers.wrap_openai` + `LANGSMITH_TRACING` (no LangChain).
 - **No network in tests** — mock `magenta.llm.chat`/`chat_structured`. DB: real
   Postgres, including tests (see §Production direction) — the `:memory:` SQLite
@@ -64,6 +68,10 @@ data AUC≈0.83 vs sim 0.72 — the sim is *harder* than reality, not easier.
 · `ablation` (5-rung ladder → data/scorecards.json) · `chat --persona X|--human`
 · `eval report [--judge]` · `parity` · `memory show <id>|eval` · `serve` (FastAPI :8000).
 Demo: `magenta serve` + `cd frontend && npm run dev` → localhost:5173.
+**Dead since Phase 1.2 (Clerk auth):** the demo frontend (`frontend/src/api/client.ts`,
+`sse.ts`) sends no `Authorization` header, so every `/api/*` route now 401s under
+`npm run dev`. This is expected, not a regression — Phase 2 replaces this frontend with
+a real product shell. Do not add a dev auth-bypass flag to work around it.
 
 ## Working rules
 - TDD (failing test → impl → pass → commit); review gate per task; fixes get regression tests.

@@ -37,10 +37,11 @@ Brief bugs fixed on sight (beyond the ones called out in the task):
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
 
 import anyio
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from magenta.api import chat_sessions as cs
@@ -48,6 +49,7 @@ from magenta.api.data_access import DEMO_POP_N, DEMO_POP_SEED
 from magenta.api.deps import get_graph_deps
 from magenta.api.schemas import ChatStartRequest, ChatStartResponse, ChatTurnRequest
 from magenta.api.sse import sse_event
+from magenta.auth import TenantContext, current_tenant
 from magenta.chat.agent import RetentionChat
 from magenta.chat.persona import Archetype, make_persona
 from magenta.graph import diagnose, sense
@@ -77,7 +79,7 @@ def _pick_customer(customer_id: str | None):
     return customers[0]  # default demo customer
 
 
-def _build_chat(customer):
+def _build_chat(customer, tenant_id: str):
     """Build a RetentionChat with a *real* report+diagnosis, driving the same
     sense/diagnose node functions the decision graph and negotiation runner
     use (mirrors `magenta.chat.runner._build_context`) instead of forking a
@@ -87,8 +89,14 @@ def _build_chat(customer):
     true here because both populations share DEMO_POP_N/SEED and
     `generate_population` is a seeded, deterministic function (CLAUDE.md:
     "same seed -> identical output"), so the same id always yields an
-    equal Customer either way."""
-    deps = get_graph_deps()
+    equal Customer either way.
+
+    `tenant_id` rebinds the cached GraphDeps singleton's tenant field per
+    request (see routes_stream.py's `replace(...)` — same fix, same reason:
+    the session's RetentionChat later reaches `act()` on this deps object via
+    `chat/agent.py`, which must not write FULFILLMENTS/GUARDRAIL_CONTACTS
+    under the process-default tenant)."""
+    deps = replace(get_graph_deps(), tenant_id=tenant_id)
     state: dict = {"customer_id": customer.customer_id}
     state.update(sense(state, deps))
     state.update(diagnose(state, deps))
@@ -96,14 +104,17 @@ def _build_chat(customer):
 
 
 @router.post("/start", response_model=ChatStartResponse)
-def chat_start(req: ChatStartRequest) -> ChatStartResponse:
+def chat_start(
+    req: ChatStartRequest,
+    tenant: TenantContext = Depends(current_tenant),
+) -> ChatStartResponse:
     if req.mode == "persona" and not req.archetype:
         raise HTTPException(422, "archetype required for persona mode")
     customer = _pick_customer(req.customer_id)
     if customer is None:
         raise HTTPException(404, f"unknown customer {req.customer_id}")
 
-    chat_agent = _build_chat(customer)
+    chat_agent = _build_chat(customer, tenant.tenant_id)
 
     persona = None
     if req.mode == "persona":
@@ -118,6 +129,7 @@ def chat_start(req: ChatStartRequest) -> ChatStartResponse:
     sid = cs.new_id()
     cs.create(cs.ChatSession(
         session_id=sid,
+        tenant_id=tenant.tenant_id,
         mode=req.mode,
         customer_id=getattr(customer, "customer_id", "CUST-DEMO"),
         archetype=req.archetype,
@@ -132,8 +144,12 @@ def chat_start(req: ChatStartRequest) -> ChatStartResponse:
 
 
 @router.post("/{session_id}/turn")
-async def chat_turn(session_id: str, req: ChatTurnRequest):
-    session = cs.get(session_id)
+async def chat_turn(
+    session_id: str,
+    req: ChatTurnRequest,
+    tenant: TenantContext = Depends(current_tenant),
+):
+    session = cs.get(session_id, tenant.tenant_id)
     if session is None:
         raise HTTPException(404, f"unknown session {session_id}")
 
