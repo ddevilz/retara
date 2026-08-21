@@ -17,12 +17,18 @@ import openai
 from langsmith.wrappers import wrap_openai
 from pydantic import BaseModel, ValidationError
 
+from magenta.budget import record_usage
 from magenta.config import load_models
+from magenta.context import get_tenant
 from magenta.logging_config import get_logger
 
 logger = get_logger(__name__)
 
 _ROLE_TO_KEY = {"cheap": "CHEAP", "large": "LARGE", "judge": "JUDGE"}
+
+# Inverse of _ROLE_TO_KEY/_model_for: model id -> role, for metering. Built once at
+# import time from models.yaml, same source _model_for uses for the forward direction.
+_ROLE_FOR_MODEL = {load_models()[key]: role for role, key in _ROLE_TO_KEY.items()}
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
@@ -64,6 +70,28 @@ def _parse_retry_after_seconds(message: str) -> float | None:
     return None
 
 
+def _meter(model: str, resp) -> None:
+    """Record token usage. Wrapped in a blanket except on purpose: metering is
+    bookkeeping, and a metering failure must never take down an inference call that
+    already succeeded and was already paid for."""
+    tenant_id = get_tenant()
+    if tenant_id is None:
+        return  # CLI and tests run outside any tenant scope
+    try:
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            return
+        record_usage(
+            tenant_id=tenant_id,
+            role=_ROLE_FOR_MODEL.get(model, "unknown"),
+            model=model,
+            tokens_in=usage.prompt_tokens,
+            tokens_out=usage.completion_tokens,
+        )
+    except Exception:
+        logger.warning("llm.metering_failed", model=model, exc_info=True)
+
+
 def _call_with_retry(fn, *args, **kw):
     """Invoke an OpenAI-compatible call, retrying on 429 with the provider's
     own retry-after hint. Bounded by RATE_LIMIT_MAX_ATTEMPTS and
@@ -74,7 +102,9 @@ def _call_with_retry(fn, *args, **kw):
     total_slept = 0.0
     for attempt in range(1, RATE_LIMIT_MAX_ATTEMPTS + 1):
         try:
-            return fn(*args, **kw)
+            resp = fn(*args, **kw)
+            _meter(kw.get("model", "unknown"), resp)
+            return resp
         except openai.RateLimitError as exc:
             if attempt >= RATE_LIMIT_MAX_ATTEMPTS:
                 raise

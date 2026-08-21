@@ -312,3 +312,53 @@ def test_parse_retry_after_handles_milliseconds():
     assert _parse_retry_after_seconds("try again in 1m21.216s") == pytest.approx(81.216)
     assert _parse_retry_after_seconds("try again in 21.5s") == 21.5
     assert _parse_retry_after_seconds("no hint here") is None
+
+
+## --------------------------------------------------------------------------- #
+## Per-tenant metering (Phase 1.6, Task 3)
+## --------------------------------------------------------------------------- #
+def test_chat_records_usage(monkeypatch, db_conn):
+    """resp.usage was previously discarded at all four call sites."""
+    from unittest.mock import MagicMock
+
+    from magenta.budget import tokens_used_this_month
+    from magenta.context import set_tenant
+    from tests.db_fixtures import TENANT_A
+
+    set_tenant(TENANT_A)
+    fake = MagicMock()
+    fake.choices[0].message.content = "hi"
+    fake.usage.prompt_tokens = 30
+    fake.usage.completion_tokens = 12
+
+    monkeypatch.setattr("magenta.llm.get_client", lambda: MagicMock(
+        **{"chat.completions.create.return_value": fake}
+    ))
+    from magenta.llm import chat
+
+    chat("cheap", [{"role": "user", "content": "hi"}])
+    assert tokens_used_this_month(TENANT_A) == 42
+
+
+def test_metering_failure_never_breaks_the_llm_call(monkeypatch):
+    """Metering is bookkeeping. A metering bug must not take down inference."""
+    from unittest.mock import MagicMock
+
+    from magenta.context import set_tenant
+    from tests.db_fixtures import TENANT_A
+
+    set_tenant(TENANT_A)
+    fake = MagicMock()
+    fake.choices[0].message.content = "hi"
+    fake.usage.prompt_tokens = 1
+    fake.usage.completion_tokens = 1
+
+    monkeypatch.setattr("magenta.llm.get_client", lambda: MagicMock(
+        **{"chat.completions.create.return_value": fake}
+    ))
+    monkeypatch.setattr(
+        "magenta.llm.record_usage", MagicMock(side_effect=RuntimeError("db down"))
+    )
+    from magenta.llm import chat
+
+    assert chat("cheap", [{"role": "user", "content": "hi"}]) == "hi"
