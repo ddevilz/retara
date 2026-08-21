@@ -45,7 +45,7 @@ from magenta.api import chat_sessions as cs
 from magenta.api.deps import get_graph_deps
 from magenta.api.population import get_population
 from magenta.api.schemas import ChatStartRequest, ChatStartResponse, ChatTurnRequest
-from magenta.api.sse import sse_event
+from magenta.api.sse import guarded_stream, sse_event
 from magenta.auth import TenantContext, current_tenant
 from magenta.chat.agent import RetentionChat
 from magenta.chat.persona import Archetype, make_persona
@@ -170,4 +170,4 @@ async def chat_turn(
             status = getattr(state, "status", None)
         yield sse_event("done", {"status": status})
 
-    return EventSourceResponse(gen())
+    return EventSourceResponse(guarded_stream(gen(), context="chat_turn"))

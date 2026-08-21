@@ -27,7 +27,7 @@ from sse_starlette.sse import EventSourceResponse
 from magenta.api.deps import get_graph_deps
 from magenta.api.population import get_population
 from magenta.api.schemas import ExperimentRequest, RunOneRequest
-from magenta.api.sse import sse_event
+from magenta.api.sse import guarded_stream, sse_event
 from magenta.auth import TenantContext, current_tenant
 from magenta.experiment import run_experiment
 from magenta.graph.ablation import make_policy
@@ -106,7 +106,7 @@ async def run_one(
             persist_audit(conn, tenant_id, audit_rows)
         yield sse_event("done", {"customer_id": req.customer_id})
 
-    return EventSourceResponse(gen())
+    return EventSourceResponse(guarded_stream(gen(), context="run_one"))
 
 
 @router.post("/experiment")
@@ -132,4 +132,4 @@ async def experiment(
         yield sse_event("scorecard", scorecard)
         yield sse_event("done", {"policy": req.policy})
 
-    return EventSourceResponse(gen())
+    return EventSourceResponse(guarded_stream(gen(), context="experiment"))
