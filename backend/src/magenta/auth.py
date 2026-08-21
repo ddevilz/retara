@@ -121,7 +121,15 @@ def ensure_org(conn: Connection, org_id: str, name: str) -> None:
     Procrastinate needs in order to write the job through our transaction rather
     than its own. `queueing_lock=org_id` scopes the dedupe lock per tenant instead
     of the task's global default -- otherwise two tenants signing up around the same
-    time would have the second `.defer()` raise `AlreadyEnqueued`.
+    time would have the second `.defer()` raise `AlreadyEnqueued`. `lock=org_id` is
+    the separate primitive that actually matters for correctness once a job is
+    running: `queueing_lock` only dedupes jobs still sitting in `todo`, it does NOT
+    stop two jobs with the same lock value from *executing* concurrently. Without
+    `lock`, a stalled-job retry (see `jobs.retry_stalled_jobs_job`) that re-queues a
+    tenant whose worker only *looked* dead (heartbeat lapsed mid multi-minute
+    LightGBM fit) could have two workers training and saving the same tenant's
+    artifacts at once -- `RiskModel.save()` is a bare `joblib.dump`, not a
+    tmp-file-then-rename, so that race can torn-write the file.
 
     No commit here: the caller owns the transaction boundary. That is the entire
     point -- if the caller rolls back, the job disappears with the row.
@@ -137,14 +145,17 @@ def ensure_org(conn: Connection, org_id: str, name: str) -> None:
         train_tenant_models_job.configure(
             connection=conn.connection.driver_connection,
             queueing_lock=org_id,
+            lock=org_id,
         ).defer(tenant_id=org_id)
 
 
 def current_tenant(
     authorization: str | None = Header(None),
 ) -> TenantContext:
-    """Sync on purpose: this does a blocking psycopg INSERT+commit (`ensure_org`)
-    and `verify_token` can do a blocking HTTPS JWKS fetch on a `kid` cache miss.
+    """Sync on purpose: this does a blocking psycopg INSERT via `ensure_org`, then
+    commits here (the commit moved out of `ensure_org` so its own transaction-boundary
+    tests can control commit/rollback), and `verify_token` can do a blocking HTTPS
+    JWKS fetch on a `kid` cache miss.
     An `async def` here would run that I/O directly on the event loop and stall
     every in-flight SSE stream; FastAPI runs a sync dependency in the threadpool
     automatically."""

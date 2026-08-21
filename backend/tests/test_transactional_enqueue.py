@@ -39,6 +39,13 @@ def test_rollback_leaves_no_orphan_job(migrated_db):
 
 
 def test_commit_persists_both_row_and_job(migrated_db):
+    """Cleanup is hand-rolled rather than routed through the shared `db_conn`
+    fixture: `_truncate_all` (tests/db_fixtures.py) deliberately excludes every
+    `procrastinate*` table (Procrastinate owns that schema, not us), so `db_conn`'s
+    TRUNCATE-on-teardown would never clear the job row this test writes -- it would
+    leak a `queueing_lock='org_commit'` job across test runs and start failing with
+    AlreadyEnqueued on the next run. Confirmed by trying the swap: it broke exactly
+    that way. Kept as manual cleanup deliberately."""
     engine = get_engine()
     with engine.connect() as conn:
         trans = conn.begin()

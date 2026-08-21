@@ -12,20 +12,32 @@ against it, so vendoring them into our history would break on every upgrade.
 """
 from __future__ import annotations
 
+import os
+
 import procrastinate
 import procrastinate.builtin_tasks
 
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel
-from magenta.db import database_url
 from magenta.storage import risk_model_path, uplift_model_path
 from magenta.tenancy import tenant_seed
 
 
 def procrastinate_conninfo() -> str:
-    """SQLAlchemy needs `postgresql+psycopg://`; libpq rejects the dialect suffix."""
-    return database_url().replace("postgresql+psycopg://", "postgresql://")
+    """SQLAlchemy needs `postgresql+psycopg://`; libpq rejects the dialect suffix.
+
+    Tolerates an unset DATABASE_URL: the connector doesn't dial a connection at
+    construction time (psycopg_pool is built with `open=False`), and every real
+    defer call supplies its own external connection via `.configure(connection=...)`.
+    So nothing actually needs this value until the worker/CLI genuinely uses it
+    (which always has the var set in practice) -- and this module is imported by
+    every CLI command via `cli.py`, so raising here would fail `magenta --help`
+    itself when no DB is configured.
+    """
+    return (os.environ.get("DATABASE_URL") or "").replace(
+        "postgresql+psycopg://", "postgresql://"
+    )
 
 
 app = procrastinate.App(
@@ -60,7 +72,7 @@ def train_tenant_models(tenant_id: str, n: int = 3000) -> None:
     )
 
 
-@app.task(name="train_tenant_models", queueing_lock="train_tenant_models")
+@app.task(name="train_tenant_models", queueing_lock="train_tenant_models", retry=3)
 def train_tenant_models_job(tenant_id: str, n: int = 3000) -> None:
     train_tenant_models(tenant_id, n=n)
 

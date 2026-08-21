@@ -22,6 +22,15 @@ def test_conninfo_leaves_a_plain_url_alone(monkeypatch):
     assert procrastinate_conninfo() == "postgresql://u:p@localhost:5433/magenta"
 
 
+def test_conninfo_tolerates_unset_database_url(monkeypatch):
+    """`jobs.py` is imported by `cli.py` at module top, which means every CLI
+    command -- not just job-related ones -- would fail at import time if this
+    raised. The connector doesn't dial a connection at construction, so nothing
+    actually needs a real value until a `.defer()`/worker call happens."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert procrastinate_conninfo() == ""
+
+
 def test_app_is_a_procrastinate_app():
     import procrastinate
 
