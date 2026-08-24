@@ -17,7 +17,7 @@ import openai
 from langsmith.wrappers import wrap_openai
 from pydantic import BaseModel, ValidationError
 
-from magenta.budget import record_usage
+from magenta.budget import BudgetExceeded, is_over_budget, record_usage
 from magenta.config import load_models
 from magenta.context import get_tenant
 from magenta.logging_config import get_logger
@@ -165,7 +165,13 @@ def chat(role: str, messages: list[dict], **kw) -> str:
 
     A 429 is retried with bounded backoff (see _call_with_retry); once
     retries are exhausted the RateLimitError propagates to the caller.
+
+    Refuses before spending: a tenant over its monthly token budget gets
+    BudgetExceeded here, before the provider is ever called.
     """
+    tenant_id = get_tenant()
+    if tenant_id is not None and is_over_budget(tenant_id):
+        raise BudgetExceeded(f"tenant {tenant_id} is over its monthly token budget")
     client = get_client()
     resp = _call_with_retry(
         client.chat.completions.create, model=_model_for(role), messages=messages, **kw
@@ -185,7 +191,13 @@ def chat_structured[M: BaseModel](
     re-raised immediately -- it is a capacity problem, not a
     schema-unsupported problem, so it must NOT fall through to the JSON-mode
     fallback (which would just burn the same exhausted budget again).
+
+    Refuses before spending: a tenant over its monthly token budget gets
+    BudgetExceeded here, before the provider is ever called.
     """
+    tenant_id = get_tenant()
+    if tenant_id is not None and is_over_budget(tenant_id):
+        raise BudgetExceeded(f"tenant {tenant_id} is over its monthly token budget")
     client = get_client()
     try:
         resp = _call_with_retry(
