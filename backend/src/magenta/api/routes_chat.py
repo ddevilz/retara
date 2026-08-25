@@ -38,12 +38,13 @@ from __future__ import annotations
 from typing import cast
 
 import anyio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
 from magenta.api import chat_sessions as cs
 from magenta.api.deps import get_graph_deps
 from magenta.api.population import get_population
+from magenta.api.rate_limit import limiter
 from magenta.api.schemas import ChatStartRequest, ChatStartResponse, ChatTurnRequest
 from magenta.api.sse import guarded_stream, sse_event
 from magenta.auth import TenantContext, bound_tenant
@@ -135,7 +136,9 @@ def chat_start(
 
 
 @router.post("/{session_id}/turn")
+@limiter.limit("5/minute")
 async def chat_turn(
+    request: Request,
     session_id: str,
     req: ChatTurnRequest,
     tenant: TenantContext = Depends(bound_tenant),

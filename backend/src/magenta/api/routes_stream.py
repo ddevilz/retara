@@ -21,11 +21,12 @@ Two brief-bug fixes applied on sight, beyond the ones called out in the task:
 from __future__ import annotations
 
 import anyio
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 
 from magenta.api.deps import get_graph_deps
 from magenta.api.population import get_population
+from magenta.api.rate_limit import limiter
 from magenta.api.schemas import ExperimentRequest, RunOneRequest
 from magenta.api.sse import guarded_stream, sse_event
 from magenta.auth import TenantContext, bound_tenant
@@ -110,7 +111,9 @@ async def run_one(
 
 
 @router.post("/experiment")
+@limiter.limit("5/minute")
 async def experiment(
+    request: Request,
     req: ExperimentRequest,
     tenant: TenantContext = Depends(bound_tenant),
 ):
