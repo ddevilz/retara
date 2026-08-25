@@ -9,11 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 
 from magenta.api.deps import ModelsNotReady
-from magenta.api.rate_limit import limiter, tenant_rate_key  # noqa: F401 -- re-exported
+from magenta.api.rate_limit import limiter
 from magenta.api.routes_chat import router as chat_router
 from magenta.api.routes_data import router as data_router
 from magenta.api.routes_stream import router as stream_router
@@ -73,7 +72,6 @@ def create_app() -> FastAPI:
 
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
-    app.add_middleware(SlowAPIMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,

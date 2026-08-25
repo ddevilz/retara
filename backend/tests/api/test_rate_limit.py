@@ -5,7 +5,7 @@ def test_rate_limit_key_is_the_tenant_not_the_ip():
     """A whole team shares one office IP; IP keying would throttle all of them."""
     from unittest.mock import MagicMock
 
-    from magenta.api.app import tenant_rate_key
+    from magenta.api.rate_limit import tenant_rate_key
     from magenta.context import set_tenant
 
     set_tenant("org_abc")

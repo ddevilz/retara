@@ -22,4 +22,4 @@ def tenant_rate_key(request: Request) -> str:
 # ponytail: in-memory limiter state, so limits are per web instance. Correct while
 # Phase 1.5's volume constraint keeps the web tier at one instance. Moving to multiple
 # instances requires shared storage -- the same decision point as object storage.
-limiter = Limiter(key_func=tenant_rate_key, default_limits=["120/minute"])
+limiter = Limiter(key_func=tenant_rate_key)
