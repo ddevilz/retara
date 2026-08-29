@@ -6,10 +6,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
 from magenta.api.deps import ModelsNotReady
+from magenta.api.rate_limit import limiter
 from magenta.api.routes_chat import router as chat_router
 from magenta.api.routes_data import router as data_router
 from magenta.api.routes_stream import router as stream_router
@@ -19,6 +22,14 @@ from magenta.jobs import app as procrastinate_app
 from magenta.logging_config import RequestContextMiddleware, configure_logging, get_logger
 
 logger = get_logger(__name__)
+
+
+def _rate_limit_handler(request: Request, exc: Exception) -> Response:
+    """Starlette's `add_exception_handler` types the handler on `Exception`, not the
+    registered subclass -- narrow it here so slowapi's own handler (typed on
+    `RateLimitExceeded`) satisfies mypy without a suppression."""
+    assert isinstance(exc, RateLimitExceeded)
+    return _rate_limit_exceeded_handler(request, exc)
 
 
 def allowed_origins() -> list[str]:
@@ -59,6 +70,8 @@ def create_app() -> FastAPI:
     configure_logging()
     app = FastAPI(title="Magenta Retain API", version="0.1.0", lifespan=_lifespan)
 
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,

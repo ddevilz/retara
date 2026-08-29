@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import pytest
 
+from magenta.api.rate_limit import limiter
+from magenta.budget import _BUDGET_CACHE
+from magenta.context import current_tenant_id
 from magenta.graph.build import GraphDeps
 from magenta.graph.state import Diagnosis
 from magenta.memory.store import CustomerMemory
@@ -12,6 +15,18 @@ from magenta.offers import Arm, OfferDecision
 from magenta.sim.oracle import Outcome
 from magenta.sim.population import generate_population
 from tests.db_fixtures import TENANT_A, TENANT_B, db_conn, migrated_db  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_global_state():
+    """Three module-global caches this branch introduced (budget cache, rate
+    limiter storage, tenant contextvar) survive across tests otherwise, causing
+    order-dependent failures: a tenant flagged over-budget or rate-limited in one
+    test stays that way for the next one that reuses the same tenant id."""
+    _BUDGET_CACHE.clear()
+    current_tenant_id.set(None)
+    limiter.reset()
+    yield
 
 
 class _SpyChat:

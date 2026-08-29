@@ -32,6 +32,7 @@ dependencies = [
     "clerk-backend-api>=7.0",
     "procrastinate>=3.0",
     "structlog>=24.1",
+    "slowapi>=0.1.10",
 ]
 
 [project.scripts]

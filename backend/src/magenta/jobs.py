@@ -20,6 +20,7 @@ import procrastinate.builtin_tasks
 from magenta.brain.risk import RiskModel
 from magenta.brain.training import build_training_data
 from magenta.brain.uplift import UpliftModel
+from magenta.context import set_tenant
 from magenta.logging_config import configure_logging
 from magenta.storage import risk_model_path, uplift_model_path
 from magenta.tenancy import tenant_seed
@@ -74,6 +75,7 @@ def train_tenant_models(tenant_id: str, n: int = 3000) -> None:
     A plain function, not the task itself, so the CLI and tests can call it directly
     without a queue in the way.
     """
+    set_tenant(tenant_id)
     seed = tenant_seed(tenant_id)
     td = build_training_data(n=n, seed=seed)
     RiskModel().fit(td.customers, td.churned).save(risk_model_path(tenant_id))

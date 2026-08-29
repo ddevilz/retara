@@ -17,7 +17,9 @@ import openai
 from langsmith.wrappers import wrap_openai
 from pydantic import BaseModel, ValidationError
 
+from magenta.budget import BudgetExceeded, is_over_budget, record_usage
 from magenta.config import load_models
+from magenta.context import get_tenant
 from magenta.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -64,6 +66,28 @@ def _parse_retry_after_seconds(message: str) -> float | None:
     return None
 
 
+def _meter(model: str, resp) -> None:
+    """Record token usage. Wrapped in a blanket except on purpose: metering is
+    bookkeeping, and a metering failure must never take down an inference call that
+    already succeeded and was already paid for."""
+    tenant_id = get_tenant()
+    if tenant_id is None:
+        return  # CLI and tests run outside any tenant scope
+    try:
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            return
+        record_usage(
+            tenant_id=tenant_id,
+            role=_role_for_model(model),
+            model=model,
+            tokens_in=usage.prompt_tokens,
+            tokens_out=usage.completion_tokens,
+        )
+    except Exception:
+        logger.warning("llm.metering_failed", model=model, exc_info=True)
+
+
 def _call_with_retry(fn, *args, **kw):
     """Invoke an OpenAI-compatible call, retrying on 429 with the provider's
     own retry-after hint. Bounded by RATE_LIMIT_MAX_ATTEMPTS and
@@ -74,7 +98,9 @@ def _call_with_retry(fn, *args, **kw):
     total_slept = 0.0
     for attempt in range(1, RATE_LIMIT_MAX_ATTEMPTS + 1):
         try:
-            return fn(*args, **kw)
+            resp = fn(*args, **kw)
+            _meter(kw.get("model", "unknown"), resp)
+            return resp
         except openai.RateLimitError as exc:
             if attempt >= RATE_LIMIT_MAX_ATTEMPTS:
                 raise
@@ -122,12 +148,30 @@ def _model_for(role: str) -> str:
     return override or load_models()[key]
 
 
+def _role_for_model(model: str) -> str:
+    """Inverse of _model_for, for metering. Re-checks each role's currently
+    configured model (override or default) on every call so it stays correct
+    when MAGENTA_MODEL_<ROLE> is set -- a static model->role map built once at
+    import time would keep pointing at the committed models.yaml and silently
+    misattribute every call made under an active override."""
+    for role in _ROLE_TO_KEY:
+        if _model_for(role) == model:
+            return role
+    return "unknown"
+
+
 def chat(role: str, messages: list[dict], **kw) -> str:
     """Single chat completion, returns assistant text content.
 
     A 429 is retried with bounded backoff (see _call_with_retry); once
     retries are exhausted the RateLimitError propagates to the caller.
+
+    Refuses before spending: a tenant over its monthly token budget gets
+    BudgetExceeded here, before the provider is ever called.
     """
+    tenant_id = get_tenant()
+    if tenant_id is not None and is_over_budget(tenant_id):
+        raise BudgetExceeded(f"tenant {tenant_id} is over its monthly token budget")
     client = get_client()
     resp = _call_with_retry(
         client.chat.completions.create, model=_model_for(role), messages=messages, **kw
@@ -147,7 +191,13 @@ def chat_structured[M: BaseModel](
     re-raised immediately -- it is a capacity problem, not a
     schema-unsupported problem, so it must NOT fall through to the JSON-mode
     fallback (which would just burn the same exhausted budget again).
+
+    Refuses before spending: a tenant over its monthly token budget gets
+    BudgetExceeded here, before the provider is ever called.
     """
+    tenant_id = get_tenant()
+    if tenant_id is not None and is_over_budget(tenant_id):
+        raise BudgetExceeded(f"tenant {tenant_id} is over its monthly token budget")
     client = get_client()
     try:
         resp = _call_with_retry(

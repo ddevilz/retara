@@ -30,9 +30,10 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from magenta.context import set_tenant
 from magenta.db import get_conn
 from magenta.jobs import train_tenant_models_job
-from magenta.logging_config import bind_tenant, get_logger
+from magenta.logging_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -205,6 +206,6 @@ async def bound_tenant(
     in the same context the handler and middleware share -- binding here actually
     survives into the rest of the request.
     """
-    bind_tenant(tenant.tenant_id)
+    set_tenant(tenant.tenant_id)
     logger.info("tenant.resolved", tenant_id=tenant.tenant_id)
     return tenant
