@@ -100,3 +100,17 @@ class ChatStartResponse(BaseModel):
 
 class ChatTurnRequest(BaseModel):
     text: str
+
+
+class OrgProfile(BaseModel):
+    name: str
+    industry: str | None
+    monthly_token_budget: int | None
+    admin_contact_email: str | None
+
+
+class OrgProfileUpdate(BaseModel):
+    name: str
+    industry: str
+    monthly_token_budget: int | None = None
+    admin_contact_email: str | None = None
