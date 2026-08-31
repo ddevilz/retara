@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Health(BaseModel):
@@ -100,3 +100,17 @@ class ChatStartResponse(BaseModel):
 
 class ChatTurnRequest(BaseModel):
     text: str
+
+
+class OrgProfile(BaseModel):
+    name: str
+    industry: str | None
+    monthly_token_budget: int | None
+    admin_contact_email: str | None
+
+
+class OrgProfileUpdate(BaseModel):
+    name: str
+    industry: str
+    monthly_token_budget: int | None = Field(default=None, ge=1)
+    admin_contact_email: str | None = None

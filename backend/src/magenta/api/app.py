@@ -15,6 +15,7 @@ from magenta.api.deps import ModelsNotReady
 from magenta.api.rate_limit import limiter
 from magenta.api.routes_chat import router as chat_router
 from magenta.api.routes_data import router as data_router
+from magenta.api.routes_org import router as org_router
 from magenta.api.routes_stream import router as stream_router
 from magenta.api.schemas import Health
 from magenta.db import get_conn
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(data_router)
+    app.include_router(org_router)
     app.include_router(stream_router)
     app.include_router(chat_router)
 
