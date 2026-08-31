@@ -106,3 +106,25 @@ def test_organizations_has_a_nullable_budget(migrated_db):
             )
         ).scalar()
     assert nullable == "YES", "NULL must mean unlimited"
+
+
+def test_organizations_has_industry_and_contact_columns(migrated_db):
+    with get_conn() as conn:
+        cols = conn.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'ORGANIZATIONS'"
+            )
+        ).scalars().all()
+    assert {"INDUSTRY", "ADMIN_CONTACT_EMAIL"} <= set(cols)
+
+
+def test_industry_column_is_nullable(migrated_db):
+    with get_conn() as conn:
+        nullable = conn.execute(
+            text(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name = 'ORGANIZATIONS' AND column_name = 'INDUSTRY'"
+            )
+        ).scalar()
+    assert nullable == "YES", "NULL must mean 'profile incomplete'"
