@@ -3,6 +3,8 @@ import Overview from "./pages/Overview";
 import Customers from "./pages/Customers";
 import RunOne from "./pages/RunOne";
 import Negotiation from "./pages/Negotiation";
+import Setup from "./pages/Setup";
+import RequireProfile from "./components/RequireProfile";
 
 const tabs = [
   { to: "/", label: "Overview", end: true },
@@ -41,10 +43,13 @@ export default function App() {
       </header>
       <main className="max-w-7xl mx-auto px-6 py-6">
         <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/customers" element={<Customers />} />
-          <Route path="/run-one" element={<RunOne />} />
-          <Route path="/negotiation" element={<Negotiation />} />
+          <Route path="/setup" element={<Setup />} />
+          <Route element={<RequireProfile />}>
+            <Route path="/" element={<Overview />} />
+            <Route path="/customers" element={<Customers />} />
+            <Route path="/run-one" element={<RunOne />} />
+            <Route path="/negotiation" element={<Negotiation />} />
+          </Route>
         </Routes>
       </main>
     </div>

@@ -1,7 +1,15 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import App from "./App";
+
+vi.mock("@clerk/clerk-react", () => ({
+  useAuth: () => ({ getToken: async () => "fake-token" }),
+}));
+vi.stubGlobal(
+  "fetch",
+  vi.fn().mockResolvedValue({ ok: true, json: async () => ({ industry: "telecom" }) }),
+);
 
 describe("App", () => {
   it("renders the nav shell with all four tabs", () => {
