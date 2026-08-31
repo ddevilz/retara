@@ -5,9 +5,21 @@ import Setup from "./Setup";
 
 vi.mock("@clerk/clerk-react", () => ({
   useAuth: () => ({ getToken: async () => "fake-token" }),
+  useOrganization: () => ({ organization: { name: "Acme Telecom" } }),
 }));
 
 describe("Setup", () => {
+  it("pre-fills Company name from the Clerk organization", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    render(
+      <MemoryRouter>
+        <Setup />
+      </MemoryRouter>,
+    );
+    expect(screen.getByLabelText("Company name")).toHaveValue("Acme Telecom");
+    vi.unstubAllGlobals();
+  });
+
   it("submits the form and PUTs the profile", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
     vi.stubGlobal("fetch", fetchMock);

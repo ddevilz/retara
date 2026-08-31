@@ -1,5 +1,5 @@
-import { useAuth } from "@clerk/clerk-react";
-import { useState, type FormEvent } from "react";
+import { useAuth, useOrganization } from "@clerk/clerk-react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
 const INDUSTRIES = [
@@ -10,8 +10,13 @@ const INDUSTRIES = [
 
 export default function Setup() {
   const { getToken } = useAuth();
+  const { organization } = useOrganization();
   const navigate = useNavigate();
   const [name, setName] = useState("");
+
+  useEffect(() => {
+    if (organization?.name) setName(organization.name);
+  }, [organization?.name]);
   const [industry, setIndustry] = useState("telecom");
   const [budget, setBudget] = useState("");
   const [contact, setContact] = useState("");
