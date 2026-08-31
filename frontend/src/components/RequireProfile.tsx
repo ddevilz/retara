@@ -11,17 +11,22 @@ export default function RequireProfile() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const token = await getToken();
-      const res = await fetch("/api/org/profile", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (cancelled) return;
-      if (!res.ok) {
+      try {
+        const token = await getToken();
+        const res = await fetch("/api/org/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (cancelled) return;
+        if (!res.ok) {
+          setStatus("incomplete");
+          return;
+        }
+        const body = await res.json();
+        setStatus(body.industry ? "complete" : "incomplete");
+      } catch {
+        if (cancelled) return;
         setStatus("incomplete");
-        return;
       }
-      const body = await res.json();
-      setStatus(body.industry ? "complete" : "incomplete");
     })();
     return () => {
       cancelled = true;

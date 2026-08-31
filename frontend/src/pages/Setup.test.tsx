@@ -6,6 +6,7 @@ import Setup from "./Setup";
 vi.mock("@clerk/clerk-react", () => ({
   useAuth: () => ({ getToken: async () => "fake-token" }),
   useOrganization: () => ({ organization: { name: "Acme Telecom" } }),
+  useClerk: () => ({ signOut: vi.fn() }),
 }));
 
 describe("Setup", () => {
@@ -40,6 +41,10 @@ describe("Setup", () => {
         expect.objectContaining({ method: "PUT" }),
       ),
     );
+    await waitFor(() =>
+      expect(screen.getByText("You're all set up.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText("Company name")).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 

@@ -34,6 +34,12 @@ describe("RequireProfile", () => {
     await waitFor(() => expect(screen.getByText("Setup page")).toBeInTheDocument());
   });
 
+  it("redirects to /setup when the fetch throws", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    renderGuarded();
+    await waitFor(() => expect(screen.getByText("Setup page")).toBeInTheDocument());
+  });
+
   it("renders the protected route when the profile is complete", async () => {
     vi.stubGlobal(
       "fetch",

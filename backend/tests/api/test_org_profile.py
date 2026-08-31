@@ -41,6 +41,16 @@ async def test_put_profile_updates_and_returns(client, db_conn):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [0, -1])
+async def test_put_profile_rejects_non_positive_budget(client, db_conn, budget):
+    resp = await client.put(
+        "/api/org/profile",
+        json={"name": "Acme", "industry": "telecom", "monthly_token_budget": budget},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_put_profile_rejects_unsupported_industry(client, db_conn):
     resp = await client.put(
         "/api/org/profile",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Health(BaseModel):
@@ -112,5 +112,5 @@ class OrgProfile(BaseModel):
 class OrgProfileUpdate(BaseModel):
     name: str
     industry: str
-    monthly_token_budget: int | None = None
+    monthly_token_budget: int | None = Field(default=None, ge=1)
     admin_contact_email: str | None = None

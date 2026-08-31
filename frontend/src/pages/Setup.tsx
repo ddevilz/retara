@@ -1,6 +1,5 @@
-import { useAuth, useOrganization } from "@clerk/clerk-react";
+import { useAuth, useClerk, useOrganization } from "@clerk/clerk-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
 
 const INDUSTRIES = [
   { value: "telecom", label: "Telecom", available: true },
@@ -11,7 +10,7 @@ const INDUSTRIES = [
 export default function Setup() {
   const { getToken } = useAuth();
   const { organization } = useOrganization();
-  const navigate = useNavigate();
+  const { signOut } = useClerk();
   const [name, setName] = useState("");
 
   useEffect(() => {
@@ -22,6 +21,7 @@ export default function Setup() {
   const [contact, setContact] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -46,12 +46,23 @@ export default function Setup() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail ?? `${res.status} ${res.statusText}`);
       }
-      navigate("/");
+      setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (submitted) {
+    return (
+      <div className="max-w-lg mx-auto text-center py-16">
+        <h1 className="text-2xl font-bold tracking-tight mb-2 text-ink-50">
+          You&apos;re all set up.
+        </h1>
+        <p className="text-gray-400">The full app is coming soon.</p>
+      </div>
+    );
   }
 
   return (
@@ -96,6 +107,7 @@ export default function Setup() {
           </span>
           <input
             type="number"
+            min="1"
             className="bg-ink-800 border border-ink-600 rounded-lg px-3 py-2 font-mono"
             value={budget}
             onChange={(e) => setBudget(e.target.value)}
@@ -118,6 +130,13 @@ export default function Setup() {
           {submitting ? "Saving…" : "Save and continue"}
         </button>
       </form>
+      <button
+        type="button"
+        onClick={() => signOut()}
+        className="mt-4 text-sm text-gray-500 hover:text-gray-300 underline"
+      >
+        Sign out
+      </button>
     </div>
   );
 }
